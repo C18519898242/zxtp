@@ -1,0 +1,29 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Local data cache
+/data/raw/**
+/data/warehouse/**
+/data/documents/**
+/data/exports/**
+!/data/raw/**/
+!/data/warehouse/**/
+!/data/documents/**/
+!/data/exports/**/
+!/data/raw/**/.gitkeep
+!/data/warehouse/**/.gitkeep
+!/data/documents/**/.gitkeep
+!/data/exports/**/.gitkeep
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
