@@ -105,6 +105,49 @@ Python CLI
 - AI 上下文：Markdown + JSON 导出
 - 交互方式：CLI 优先，Codex 直接读取项目文件；后续可选 Streamlit 或轻量 Web UI
 
+## 开发环境和运行
+
+本项目使用 `uv` 管理 Python 项目环境。可以把它理解为 Python 生态里偏项目级的依赖和运行工具，作用接近 Java 项目里的 Maven / Gradle 的一部分能力。
+
+相关文件：
+
+```text
+pyproject.toml  # 项目声明，类似 pom.xml / build.gradle
+uv.lock         # 锁定依赖解析结果，类似 package-lock.json
+.venv/          # uv 创建的本地虚拟环境，通常不提交到 Git
+```
+
+首次拉取项目后，在项目根目录运行：
+
+```powershell
+uv sync
+```
+
+这会根据 `pyproject.toml` 和 `uv.lock` 创建/更新本地虚拟环境，并以 editable 方式安装当前项目。
+
+运行 CLI：
+
+```powershell
+uv run python -m zxtp --help
+uv run python -m zxtp fetch-gsgk 002736
+```
+
+运行测试：
+
+```powershell
+uv run python -m unittest discover -s tests -v
+```
+
+如果暂时不想使用 `uv`，也可以在 PowerShell 中临时把 `src` 加到 Python 模块搜索路径：
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m zxtp --help
+python -m unittest discover -s tests -v
+```
+
+但长期建议使用 `uv run ...`，这样不需要手动处理 `PYTHONPATH`，也更容易保证不同机器上的依赖环境一致。
+
 ## 为什么用 DuckDB
 
 本项目是单人本地投研工具，不需要一开始部署 PostgreSQL 或 MySQL 服务。DuckDB 的优势是：
