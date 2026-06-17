@@ -1,4 +1,4 @@
-﻿[project]
+[project]
 name = "zxtp"
 version = "0.1.0"
 description = "Personal AI-assisted stock research toolkit built around local cached TQLEX data."
