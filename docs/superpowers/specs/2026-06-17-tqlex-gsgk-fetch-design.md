@@ -1,66 +1,66 @@
-# TQLEX GSGK Fetch Design
+# TQLEX 公司概况抓取设计
 
-Date: 2026-06-17
+日期：2026-06-17
 
-## Purpose
+## 目标
 
-Implement the first minimal data-link step for ZXTP: fetch the company overview
-module (`gsgk`) from the TQLEX endpoint and persist the raw response locally.
-This design intentionally stops before parsing, DuckDB loading, or brief output.
+实现 ZXTP 的第一个最小数据链路步骤：从 TQLEX 接口抓取公司概况模块
+`gsgk`，并把原始响应持久化到本地。
 
-## Scope
+本设计刻意停在 raw JSON 落盘，不做解析、不写 DuckDB、不生成 `brief`。
 
-The first implementation supports one command:
+## 范围
+
+第一版只支持一个命令：
 
 ```bash
 zxtp fetch-gsgk 002736
 ```
 
-It sends one TQLEX request:
+该命令只发送一个 TQLEX 请求：
 
 ```text
 POST http://zxtp.guosen.com.cn:7615/TQLEX?Entry=CWServ.tdxf10_gg_gsgk
 Body: {"Params":["0","002736",""]}
 ```
 
-The values are derived from the `gg_gsgk.html` page and its
-`site/tdxf10/js/gg_gsgk.js` script. For this page, the company overview grid
-uses call name `tdxf10_gg_gsgk` and parameters `["0", stock_code, ""]`.
+接口形态来自 `gg_gsgk.html` 页面及其脚本
+`site/tdxf10/js/gg_gsgk.js`。该页面的“公司基本情况”区块使用
+`tdxf10_gg_gsgk`，参数为 `["0", stock_code, ""]`。
 
-## Non-Goals
+## 不做事项
 
-This milestone does not:
+本里程碑不做：
 
-- Fetch `gsgy`, `zxts`, `gsgg`, announcement detail, or other modules.
-- Parse `ResultSets` into structured business fields.
-- Initialize or write DuckDB.
-- Generate `brief` output.
-- Implement watchlists, batch refresh, filtering, sorting, or AI context export.
+- 抓取 `gsgy`、`zxts`、`gsgg`、公告详情或其他模块。
+- 把 `ResultSets` 解析为结构化业务字段。
+- 初始化或写入 DuckDB。
+- 生成 `brief` 输出。
+- 实现自选股、批量刷新、查询筛选、排序或 AI 上下文导出。
 
-## Architecture
+## 架构
 
-The implementation has three small units.
+实现拆成三个小单元。
 
 ### TqlexClient
 
-`TqlexClient` owns HTTP communication with TQLEX.
+`TqlexClient` 负责和 TQLEX 通信。
 
-Responsibilities:
+职责：
 
-- Build the request URL from a base URL and an entry name.
-- POST a JSON body containing `Params`.
-- Apply a short, explicit timeout.
-- Return the raw response text and parsed JSON when valid.
-- Surface network failures, non-2xx responses, timeouts, and invalid JSON as
-  command failures.
+- 根据 base URL 和 entry 组装请求 URL。
+- POST 包含 `Params` 的 JSON body。
+- 使用明确、较短的超时时间。
+- 在响应合法时返回原始响应文本和解析后的 JSON。
+- 将网络失败、非 2xx 状态码、超时、非法 JSON 作为命令失败暴露出来。
 
-The client should not know about `gsgk`, file paths, DuckDB, or CLI formatting.
+`TqlexClient` 不应知道 `gsgk`、文件路径、DuckDB 或 CLI 展示格式。
 
 ### Raw Cache Writer
 
-The raw cache writer owns local persistence.
+raw cache writer 负责本地持久化。
 
-For stock `002736`, it writes:
+以股票 `002736` 为例，落盘路径为：
 
 ```text
 data/raw/tqlex/tdxf10_gg_gsgk/
@@ -70,9 +70,8 @@ data/raw/tqlex/tdxf10_gg_gsgk/
       latest.meta.json
 ```
 
-`latest.json` stores the TQLEX response JSON after validation and pretty
-printing. It must not rename fields, drop fields, or extract structured business
-records. `latest.meta.json` stores request and provenance metadata:
+`latest.json` 保存经过 JSON 校验并格式化后的 TQLEX 响应。它不能重命名字段、
+删除字段，也不能抽取结构化业务记录。`latest.meta.json` 保存请求和来源元数据：
 
 ```json
 {
@@ -87,72 +86,68 @@ records. `latest.meta.json` stores request and provenance metadata:
 }
 ```
 
-If a response is not valid JSON, the command must not overwrite an existing
-`latest.json`.
+如果响应不是合法 JSON，命令不能覆盖已有的 `latest.json`。
 
-### CLI Command
+### CLI 命令
 
-`fetch-gsgk` is the only user-facing command in this design.
+`fetch-gsgk` 是本设计唯一的用户可见命令。
 
-Responsibilities:
+职责：
 
-- Validate that `stock_code` is a six-digit string.
-- Compose `entry = "tdxf10_gg_gsgk"` and `params = ["0", stock_code, ""]`.
-- Call `TqlexClient`.
-- Save the raw response and metadata through the raw cache writer.
-- Print a short success line with the output path.
-- Return a non-zero exit code on failure.
+- 校验 `stock_code` 必须是 6 位数字字符串。
+- 组装 `entry = "tdxf10_gg_gsgk"` 和 `params = ["0", stock_code, ""]`。
+- 调用 `TqlexClient`。
+- 通过 raw cache writer 保存原始响应和 metadata。
+- 成功时打印简短结果和输出路径。
+- 失败时返回非零退出码。
 
-## Data Flow
+## 数据流
 
 ```text
 zxtp fetch-gsgk 002736
-  -> validate stock code
+  -> 校验股票代码
   -> TqlexClient.call("tdxf10_gg_gsgk", ["0", "002736", ""])
-  -> parse response as JSON
-  -> compute response hash
-  -> write latest.json
-  -> write latest.meta.json
-  -> print output path
+  -> 将响应解析为 JSON
+  -> 计算响应 hash
+  -> 写入 latest.json
+  -> 写入 latest.meta.json
+  -> 打印输出路径
 ```
 
-## Error Handling
+## 错误处理
 
-The command fails without overwriting `latest.json` when:
+以下情况命令失败，并且不能覆盖已有的 `latest.json`：
 
-- The stock code is not exactly six digits.
-- The HTTP request times out.
-- The server returns a non-2xx status.
-- The response body is empty.
-- The response body is not valid JSON.
-- The response JSON contains a non-zero `ErrorCode`.
-- The cache directory or files cannot be written.
+- 股票代码不是 6 位数字。
+- HTTP 请求超时。
+- 服务端返回非 2xx 状态码。
+- 响应 body 为空。
+- 响应 body 不是合法 JSON。
+- 响应 JSON 包含非零 `ErrorCode`。
+- cache 目录或文件无法写入。
 
-Failures should produce concise messages that include the stock code and the
-failed step. Sensitive or large response bodies should not be printed in full.
+失败信息应简洁，包含股票代码和失败步骤。不要完整打印敏感或过大的响应 body。
 
-## Testing
+## 测试
 
-Tests should cover:
+测试应覆盖：
 
-- Request URL and body for `fetch-gsgk 002736`.
-- Six-digit stock code validation.
-- Raw cache path generation.
-- Successful write of `latest.json` and `latest.meta.json`.
-- Metadata fields including `entry`, `params`, `stock_code`, `module`,
-  `fetched_at`, and `response_hash`.
-- Invalid JSON does not overwrite an existing `latest.json`.
-- Non-zero `ErrorCode` is treated as failure.
+- `fetch-gsgk 002736` 的请求 URL 和 body。
+- 6 位股票代码校验。
+- raw cache 路径生成规则。
+- 成功写入 `latest.json` 和 `latest.meta.json`。
+- metadata 字段，包括 `entry`、`params`、`stock_code`、`module`、
+  `fetched_at` 和 `response_hash`。
+- 非法 JSON 不覆盖已有 `latest.json`。
+- 非零 `ErrorCode` 被视为失败。
 
-Network access should be mocked in unit tests. A live smoke test may be run
-manually, but it is not required for ordinary automated test runs.
+单元测试应 mock 网络请求。可以手动运行 live smoke test，但普通自动化测试不依赖真实网络。
 
-## Acceptance Criteria
+## 验收标准
 
-- Running `zxtp fetch-gsgk 002736` fetches `tdxf10_gg_gsgk` with params
-  `["0", "002736", ""]`.
-- The command writes raw JSON and metadata under the expected `gsgk` path.
-- The command does not create or modify DuckDB files.
-- The command does not fetch any non-`gsgk` module.
-- Unit tests verify request composition, cache path generation, successful
-  persistence, and failure behavior.
+- 运行 `zxtp fetch-gsgk 002736` 会请求 `tdxf10_gg_gsgk`，参数为
+  `["0", "002736", ""]`。
+- 命令会在预期的 `gsgk` 路径下写入 raw JSON 和 metadata。
+- 命令不会创建或修改 DuckDB 文件。
+- 命令不会抓取任何非 `gsgk` 模块。
+- 单元测试验证请求组装、cache 路径生成、成功持久化和失败行为。
