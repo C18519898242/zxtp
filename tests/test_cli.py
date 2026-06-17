@@ -59,3 +59,35 @@ class CliFetchGsgkTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 1)
         self.assertIn("stock code must be exactly 6 digits", stderr.getvalue())
+
+
+class CliUiTests(unittest.TestCase):
+    def test_ui_fetches_gsgk_from_menu_choices(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_client = Mock()
+            fake_client.source_url.return_value = (
+                "http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_gsgk"
+            )
+            fake_client.call.return_value = TqlexResponse(
+                raw_text='{"ErrorCode":0,"ResultSets":[],"ResultSetNum":0}',
+                json_data={"ErrorCode": 0, "ResultSets": [], "ResultSetNum": 0},
+            )
+            inputs = iter(["1", "1", "002736"])
+            stdout = io.StringIO()
+
+            with patch("zxtp.cli.TqlexClient", return_value=fake_client):
+                exit_code = main(
+                    ["ui", "--data-root", tmp],
+                    input_func=lambda prompt="": next(inputs),
+                    output=stdout,
+                )
+
+            self.assertEqual(exit_code, 0)
+            fake_client.call.assert_called_once_with(
+                "tdxf10_gg_gsgk", ["0", "002736", ""]
+            )
+            output = stdout.getvalue()
+            self.assertIn("ZXTP", output)
+            self.assertIn("下载数据", output)
+            self.assertIn("公司概况 gsgk", output)
+            self.assertIn("saved gsgk raw JSON", output)

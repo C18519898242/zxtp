@@ -129,8 +129,11 @@ uv sync
 
 ```powershell
 uv run python -m zxtp --help
+uv run python -m zxtp ui
 uv run python -m zxtp fetch-gsgk 002736
 ```
+
+其中 `ui` 是给人使用的交互式菜单入口；`fetch-gsgk` 是给脚本、自动化和 AI agent 使用的参数式入口。
 
 运行测试：
 
