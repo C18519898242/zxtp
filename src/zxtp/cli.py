@@ -9,6 +9,7 @@ from typing import Any, Callable, Iterator, Sequence, TextIO
 
 from .ai_context import generate_full_context
 from .config import resolve_data_root
+from .structured import parse_company_overview
 from .tqlex import (
     RawCacheWriter,
     TqlexClient,
@@ -738,6 +739,11 @@ def run_fetch_all(stock_code: str, data_root: Path, output_stream: TextIO) -> Pa
     print("开始下载公司概况 gsgk...", file=output_stream)
     data_path = fetch_gsgk(valid_stock_code, data_root)
     print(f"saved gsgk raw JSON: {data_path}", file=output_stream)
+    database_path = parse_company_overview(valid_stock_code, data_root)
+    print(
+        f"saved company overview structured data: {database_path}",
+        file=output_stream,
+    )
 
     print("开始下载研报评级 ybpj...", file=output_stream)
     for data_path in fetch_ybpj(valid_stock_code, data_root):
@@ -831,6 +837,11 @@ def run_ui(
                 print("开始下载公司概况 gsgk...", file=output_stream)
                 data_path = fetch_gsgk(stock_code, data_root)
                 print(f"saved gsgk raw JSON: {data_path}", file=output_stream)
+                database_path = parse_company_overview(stock_code, data_root)
+                print(
+                    f"saved company overview structured data: {database_path}",
+                    file=output_stream,
+                )
                 return 0
 
             if module == "2":
@@ -902,6 +913,11 @@ def main(
             if args.command == "fetch-gsgk":
                 data_path = fetch_gsgk(args.stock_code, data_root)
                 print(f"saved gsgk raw JSON: {data_path}", file=output_stream)
+                database_path = parse_company_overview(args.stock_code, data_root)
+                print(
+                    f"saved company overview structured data: {database_path}",
+                    file=output_stream,
+                )
                 return 0
             if args.command == "fetch-ybpj":
                 for data_path in fetch_ybpj(args.stock_code, data_root):

@@ -427,6 +427,22 @@ python -m zxtp export-ai-context 002648
 data/exports/ai_context/002648/full_context.md
 ```
 
+### 公司概况 Structured MVP
+
+`fetch-gsgk` 在保存公司概况 raw JSON 后，会自动将第一条公司概况记录写入 DuckDB：
+
+```powershell
+python -m zxtp fetch-gsgk 002736
+```
+
+数据库文件位于：
+
+```text
+<data-root>/warehouse/research.duckdb
+```
+
+可以直接使用 DBeaver 打开该文件，并浏览 `company_overviews` 表。该表当前包含公司名称、行业、主营业务、控股股东、管理层、联系方式、地址、公司简介、员工数以及 raw 来源路径和抓取元数据。
+
 ## AI 使用方式
 
 AI 不直接调用 TQLEX 接口，而是读取已经落地的数据：

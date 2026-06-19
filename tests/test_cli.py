@@ -29,6 +29,34 @@ class WorkingDirectory:
 
 
 class CliFetchGsgkTests(unittest.TestCase):
+    def test_fetch_gsgk_parses_company_overview_into_duckdb(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_client = Mock()
+            fake_client.source_url.return_value = (
+                "http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_gsgk"
+            )
+            fake_client.call.return_value = TqlexResponse(
+                raw_text='{"ErrorCode":0,"ResultSets":[],"ResultSetNum":0}',
+                json_data={"ErrorCode": 0, "ResultSets": [], "ResultSetNum": 0},
+            )
+            database_path = Path(tmp) / "warehouse" / "research.duckdb"
+            stdout = io.StringIO()
+
+            with patch("zxtp.cli.TqlexClient", return_value=fake_client):
+                with patch(
+                    "zxtp.cli.parse_company_overview",
+                    return_value=database_path,
+                ) as parse_company_overview:
+                    with redirect_stdout(stdout):
+                        exit_code = main(["fetch-gsgk", "002736", "--data-root", tmp])
+
+            self.assertEqual(exit_code, 0)
+            parse_company_overview.assert_called_once_with("002736", Path(tmp))
+            self.assertIn(
+                f"saved company overview structured data: {database_path}",
+                stdout.getvalue(),
+            )
+
     def test_fetch_gsgk_writes_raw_cache_and_returns_zero(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             fake_client = Mock()
