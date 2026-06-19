@@ -13,6 +13,33 @@ GSGK_MODULE = "gsgk"
 GSGK_PARAM_KIND = "0"
 YBPJ_ENTRY = "tdxf10_gg_ybpj"
 YBPJ_MODULES = ("tzpjtj", "yzyq", "ylyctj", "ylycmx", "ycpjyjbg")
+CWFX_ENTRY = "tdxf10_gg_cwfx"
+CWFX_MODULES = (
+    "gptype",
+    "cwzd",
+    "zcdjt",
+    "cwgc",
+    "cwbg",
+    "zyzb",
+    "zcfzb",
+    "lyb",
+    "xjllb",
+    "yhzxzb",
+    "qszxzb",
+    "bxzxzb",
+    "wdzb",
+    "ylnl",
+    "syzl",
+    "yynl",
+    "zbjg",
+    "cznl",
+    "xjll",
+    "cznl2",
+)
+CWFX_BDSM_ENTRY = "tdxf10_gg_comreq"
+CWFX_BDSM_MODULE = "bdsm"
+CWFX_CBDP_ENTRY = "tdxf10_gg_cwfx_cbdp"
+CWFX_CBDP_MODULE = "cbdp"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -37,6 +64,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fetch_ybpj.add_argument("stock_code")
     fetch_ybpj.add_argument(
+        "--data-root",
+        type=Path,
+        default=Path("data"),
+        help="Data root directory. Defaults to ./data.",
+    )
+
+    fetch_cwfx = subparsers.add_parser(
+        "fetch-cwfx",
+        help="Fetch TQLEX financial analysis raw JSON for one stock.",
+    )
+    fetch_cwfx.add_argument("stock_code")
+    fetch_cwfx.add_argument(
         "--data-root",
         type=Path,
         default=Path("data"),
@@ -114,6 +153,47 @@ def fetch_ybpj(stock_code: str, data_root: Path) -> list[Path]:
     return data_paths
 
 
+def fetch_cwfx(stock_code: str, data_root: Path) -> list[Path]:
+    valid_stock_code = validate_stock_code(stock_code)
+    client = TqlexClient()
+    data_paths = []
+
+    for module in CWFX_MODULES:
+        data_paths.append(
+            fetch_tqlex_raw(
+                entry=CWFX_ENTRY,
+                params=[valid_stock_code, module, ""],
+                stock_code=valid_stock_code,
+                module=module,
+                data_root=data_root,
+                client=client,
+            )
+        )
+
+    data_paths.append(
+        fetch_tqlex_raw(
+            entry=CWFX_BDSM_ENTRY,
+            params=[CWFX_BDSM_MODULE, valid_stock_code],
+            stock_code=valid_stock_code,
+            module=CWFX_BDSM_MODULE,
+            data_root=data_root,
+            client=client,
+        )
+    )
+    data_paths.append(
+        fetch_tqlex_raw(
+            entry=CWFX_CBDP_ENTRY,
+            params=[valid_stock_code, "1"],
+            stock_code=valid_stock_code,
+            module=CWFX_CBDP_MODULE,
+            data_root=data_root,
+            client=client,
+        )
+    )
+
+    return data_paths
+
+
 def run_ui(
     data_root: Path,
     *,
@@ -139,13 +219,14 @@ def run_ui(
     print("请选择数据模块：", file=output_stream)
     print("1. 公司概况 gsgk", file=output_stream)
     print("2. 研报评级 ybpj", file=output_stream)
+    print("3. 财务分析 cwfx", file=output_stream)
     print("0. 返回", file=output_stream)
     module = input_func("> ").strip()
 
     if module == "0":
         print("已返回", file=output_stream)
         return 0
-    if module not in {"1", "2"}:
+    if module not in {"1", "2", "3"}:
         raise TqlexError("unsupported module choice")
 
     print("", file=output_stream)
@@ -159,10 +240,17 @@ def run_ui(
         print(f"saved gsgk raw JSON: {data_path}", file=output_stream)
         return 0
 
+    if module == "2":
+        print("", file=output_stream)
+        print("开始下载研报评级 ybpj...", file=output_stream)
+        for data_path in fetch_ybpj(stock_code, data_root):
+            print(f"saved ybpj raw JSON: {data_path}", file=output_stream)
+        return 0
+
     print("", file=output_stream)
-    print("开始下载研报评级 ybpj...", file=output_stream)
-    for data_path in fetch_ybpj(stock_code, data_root):
-        print(f"saved ybpj raw JSON: {data_path}", file=output_stream)
+    print("开始下载财务分析 cwfx...", file=output_stream)
+    for data_path in fetch_cwfx(stock_code, data_root):
+        print(f"saved cwfx raw JSON: {data_path}", file=output_stream)
     return 0
 
 
@@ -186,6 +274,10 @@ def main(
         if args.command == "fetch-ybpj":
             for data_path in fetch_ybpj(args.stock_code, args.data_root):
                 print(f"saved ybpj raw JSON: {data_path}", file=output_stream)
+            return 0
+        if args.command == "fetch-cwfx":
+            for data_path in fetch_cwfx(args.stock_code, args.data_root):
+                print(f"saved cwfx raw JSON: {data_path}", file=output_stream)
             return 0
         if args.command == "ui":
             run_ui(args.data_root, input_func=input_func, output=output_stream)
