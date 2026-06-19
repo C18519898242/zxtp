@@ -212,6 +212,68 @@ class CliFetchCwfxTests(unittest.TestCase):
         self.assertIn("stock code must be exactly 6 digits", stderr.getvalue())
 
 
+class CliFetchHyfxTests(unittest.TestCase):
+    def test_fetch_hyfx_writes_each_raw_cache_and_returns_zero(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_client = Mock()
+            fake_client.source_url.return_value = (
+                "http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_hyfx"
+            )
+            fake_client.call.return_value = TqlexResponse(
+                raw_text='{"ErrorCode":0,"ResultSets":[],"ResultSetNum":0}',
+                json_data={"ErrorCode": 0, "ResultSets": [], "ResultSetNum": 0},
+            )
+            stdout = io.StringIO()
+
+            with patch("zxtp.cli.TqlexClient", return_value=fake_client):
+                with redirect_stdout(stdout):
+                    exit_code = main(["fetch-hyfx", "002736", "--data-root", tmp])
+
+            self.assertEqual(exit_code, 0)
+            expected_modules = [
+                "tot",
+                "hyxw",
+                "hyyb",
+                "scbx",
+                "gsgm",
+                "gzsp",
+                "cwgz",
+                "fhrzb",
+            ]
+            self.assertEqual(
+                fake_client.call.call_args_list,
+                [
+                    call("tdxf10_gg_hyfx", [module, "002736", ""])
+                    for module in expected_modules
+                ],
+            )
+            output = stdout.getvalue()
+            self.assertIn("saved hyfx raw JSON", output)
+            for module in expected_modules:
+                data_path = (
+                    Path(tmp)
+                    / "raw"
+                    / "tqlex"
+                    / "tdxf10_gg_hyfx"
+                    / "stock=002736"
+                    / f"module={module}"
+                    / "latest.json"
+                )
+                self.assertEqual(
+                    json.loads(data_path.read_text(encoding="utf-8")),
+                    {"ErrorCode": 0, "ResultSets": [], "ResultSetNum": 0},
+                )
+
+    def test_fetch_hyfx_rejects_invalid_stock_code(self) -> None:
+        stderr = io.StringIO()
+
+        with redirect_stderr(stderr):
+            exit_code = main(["fetch-hyfx", "BAD"])
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("stock code must be exactly 6 digits", stderr.getvalue())
+
+
 class CliExportAiContextTests(unittest.TestCase):
     def test_export_ai_context_writes_full_context_markdown(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -301,6 +363,34 @@ class CliUiCwfxTests(unittest.TestCase):
             output = stdout.getvalue()
             self.assertIn("cwfx", output)
             self.assertIn("saved cwfx raw JSON", output)
+
+
+class CliUiHyfxTests(unittest.TestCase):
+    def test_ui_fetches_hyfx_from_menu_choices(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_client = Mock()
+            fake_client.source_url.return_value = (
+                "http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_hyfx"
+            )
+            fake_client.call.return_value = TqlexResponse(
+                raw_text='{"ErrorCode":0,"ResultSets":[],"ResultSetNum":0}',
+                json_data={"ErrorCode": 0, "ResultSets": [], "ResultSetNum": 0},
+            )
+            inputs = iter(["1", "4", "002736"])
+            stdout = io.StringIO()
+
+            with patch("zxtp.cli.TqlexClient", return_value=fake_client):
+                exit_code = main(
+                    ["ui", "--data-root", tmp],
+                    input_func=lambda prompt="": next(inputs),
+                    output=stdout,
+                )
+
+            self.assertEqual(exit_code, 0)
+            fake_client.call.assert_any_call("tdxf10_gg_hyfx", ["tot", "002736", ""])
+            output = stdout.getvalue()
+            self.assertIn("hyfx", output)
+            self.assertIn("saved hyfx raw JSON", output)
 
 
 class CliUiAiContextTests(unittest.TestCase):

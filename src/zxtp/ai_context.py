@@ -63,6 +63,17 @@ RESEARCH_RATING_SOURCES = (
     RawSource("预测评级研报", "tdxf10_gg_ybpj", "ycpjyjbg"),
 )
 
+INDUSTRY_ANALYSIS_SOURCES = (
+    RawSource("行业总览", "tdxf10_gg_hyfx", "tot"),
+    RawSource("行业新闻", "tdxf10_gg_hyfx", "hyxw"),
+    RawSource("行业研报", "tdxf10_gg_hyfx", "hyyb"),
+    RawSource("市场表现", "tdxf10_gg_hyfx", "scbx"),
+    RawSource("公司规模", "tdxf10_gg_hyfx", "gsgm"),
+    RawSource("估值水平", "tdxf10_gg_hyfx", "gzsp"),
+    RawSource("财务估值", "tdxf10_gg_hyfx", "cwgz"),
+    RawSource("分红融资比", "tdxf10_gg_hyfx", "fhrzb"),
+)
+
 
 def generate_full_context(stock_code: str, data_root: Path) -> Path:
     valid_stock_code = validate_stock_code(stock_code)
@@ -78,7 +89,12 @@ def generate_full_context(stock_code: str, data_root: Path) -> Path:
     research_statuses = source_statuses(
         data_root, valid_stock_code, RESEARCH_RATING_SOURCES
     )
-    all_statuses = company_statuses + financial_statuses + research_statuses
+    industry_statuses = source_statuses(
+        data_root, valid_stock_code, INDUSTRY_ANALYSIS_SOURCES
+    )
+    all_statuses = (
+        company_statuses + financial_statuses + research_statuses + industry_statuses
+    )
 
     template = load_template()
     rendered = render_template(
@@ -90,6 +106,7 @@ def generate_full_context(stock_code: str, data_root: Path) -> Path:
             "company_overview_sources": render_sources(company_statuses),
             "financial_analysis_sources": render_sources(financial_statuses),
             "research_rating_sources": render_sources(research_statuses),
+            "industry_analysis_sources": render_sources(industry_statuses),
             "all_sources": render_sources(all_statuses),
         },
     )

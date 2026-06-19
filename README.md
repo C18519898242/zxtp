@@ -214,7 +214,7 @@ data/
 
 ### AI Context Markdown
 
-`data/exports/ai_context/<stock_code>/full_context.md` 是面向人类和 AI 阅读的 stock-first 入口文件。它不替代 raw JSON，也不改变 raw 目录的 source-first 组织方式；raw 层仍负责保存原始证据，AI Context 层负责把某一只股票已经缓存的公司概况、财务分析、研报评级等数据组织到固定 Markdown 章节里。
+`data/exports/ai_context/<stock_code>/full_context.md` 是面向人类和 AI 阅读的 stock-first 入口文件。它不替代 raw JSON，也不改变 raw 目录的 source-first 组织方式；raw 层仍负责保存原始证据，AI Context 层负责把某一只股票已经缓存的公司概况、财务分析、研报评级、行业分析等数据组织到固定 Markdown 章节里。
 
 第一版 `full_context.md` 由模板生成，模板位于：
 
@@ -229,8 +229,9 @@ src/zxtp/templates/ai_context/full_context.md.tpl
 2. 公司概况
 3. 财务分析
 4. 研报评级
-5. 风险与待验证问题
-6. 数据来源
+5. 行业分析
+6. 风险与待验证问题
+7. 数据来源
 ```
 
 即使某个模块暂时没有 raw 数据，也保留章节并标记为缺失。这样 AI 每次读取不同股票时都能看到稳定格式，不需要猜测章节名称、顺序或数据来源。后续 parser 完成后，生成器会继续使用同一个模板，把“暂无结构化摘要”替换为解析后的指标、表格和文字摘要。

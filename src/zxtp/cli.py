@@ -41,6 +41,8 @@ CWFX_BDSM_ENTRY = "tdxf10_gg_comreq"
 CWFX_BDSM_MODULE = "bdsm"
 CWFX_CBDP_ENTRY = "tdxf10_gg_cwfx_cbdp"
 CWFX_CBDP_MODULE = "cbdp"
+HYFX_ENTRY = "tdxf10_gg_hyfx"
+HYFX_MODULES = ("tot", "hyxw", "hyyb", "scbx", "gsgm", "gzsp", "cwgz", "fhrzb")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -77,6 +79,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fetch_cwfx.add_argument("stock_code")
     fetch_cwfx.add_argument(
+        "--data-root",
+        type=Path,
+        default=Path("data"),
+        help="Data root directory. Defaults to ./data.",
+    )
+
+    fetch_hyfx = subparsers.add_parser(
+        "fetch-hyfx",
+        help="Fetch TQLEX industry analysis raw JSON for one stock.",
+    )
+    fetch_hyfx.add_argument("stock_code")
+    fetch_hyfx.add_argument(
         "--data-root",
         type=Path,
         default=Path("data"),
@@ -207,6 +221,26 @@ def fetch_cwfx(stock_code: str, data_root: Path) -> list[Path]:
     return data_paths
 
 
+def fetch_hyfx(stock_code: str, data_root: Path) -> list[Path]:
+    valid_stock_code = validate_stock_code(stock_code)
+    client = TqlexClient()
+    data_paths = []
+
+    for module in HYFX_MODULES:
+        data_paths.append(
+            fetch_tqlex_raw(
+                entry=HYFX_ENTRY,
+                params=[module, valid_stock_code, ""],
+                stock_code=valid_stock_code,
+                module=module,
+                data_root=data_root,
+                client=client,
+            )
+        )
+
+    return data_paths
+
+
 def run_ui(
     data_root: Path,
     *,
@@ -244,13 +278,14 @@ def run_ui(
     print("1. 公司概况 gsgk", file=output_stream)
     print("2. 研报评级 ybpj", file=output_stream)
     print("3. 财务分析 cwfx", file=output_stream)
+    print("4. 行业分析 hyfx", file=output_stream)
     print("0. 返回", file=output_stream)
     module = input_func("> ").strip()
 
     if module == "0":
         print("已返回", file=output_stream)
         return 0
-    if module not in {"1", "2", "3"}:
+    if module not in {"1", "2", "3", "4"}:
         raise TqlexError("unsupported module choice")
 
     print("", file=output_stream)
@@ -271,10 +306,17 @@ def run_ui(
             print(f"saved ybpj raw JSON: {data_path}", file=output_stream)
         return 0
 
+    if module == "3":
+        print("", file=output_stream)
+        print("开始下载财务分析 cwfx...", file=output_stream)
+        for data_path in fetch_cwfx(stock_code, data_root):
+            print(f"saved cwfx raw JSON: {data_path}", file=output_stream)
+        return 0
+
     print("", file=output_stream)
-    print("开始下载财务分析 cwfx...", file=output_stream)
-    for data_path in fetch_cwfx(stock_code, data_root):
-        print(f"saved cwfx raw JSON: {data_path}", file=output_stream)
+    print("开始下载行业分析 hyfx...", file=output_stream)
+    for data_path in fetch_hyfx(stock_code, data_root):
+        print(f"saved hyfx raw JSON: {data_path}", file=output_stream)
     return 0
 
 
@@ -302,6 +344,10 @@ def main(
         if args.command == "fetch-cwfx":
             for data_path in fetch_cwfx(args.stock_code, args.data_root):
                 print(f"saved cwfx raw JSON: {data_path}", file=output_stream)
+            return 0
+        if args.command == "fetch-hyfx":
+            for data_path in fetch_hyfx(args.stock_code, args.data_root):
+                print(f"saved hyfx raw JSON: {data_path}", file=output_stream)
             return 0
         if args.command == "export-ai-context":
             output_path = generate_full_context(args.stock_code, args.data_root)

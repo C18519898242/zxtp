@@ -36,11 +36,13 @@ class AiContextGenerationTests(unittest.TestCase):
             self.assertIn("## 2. 公司概况", text)
             self.assertIn("## 3. 财务分析", text)
             self.assertIn("## 4. 研报评级", text)
-            self.assertIn("## 5. 风险与待验证问题", text)
-            self.assertIn("## 6. 数据来源", text)
+            self.assertIn("## 5. 行业分析", text)
+            self.assertIn("## 6. 风险与待验证问题", text)
+            self.assertIn("## 7. 数据来源", text)
             self.assertIn("tdxf10_gg_gsgk", text)
             self.assertIn("module=gsgk", text)
             self.assertIn("tdxf10_gg_cwfx", text)
+            self.assertIn("tdxf10_gg_hyfx", text)
             self.assertIn("缺失", text)
 
 
