@@ -532,6 +532,98 @@ class CliFetchFhrzTests(unittest.TestCase):
         self.assertIn("stock code must be exactly 6 digits", stderr.getvalue())
 
 
+class CliFetchGdyjTests(unittest.TestCase):
+    def test_fetch_gdyj_writes_core_raw_cache_and_returns_zero(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_client = Mock()
+            fake_client.source_url.side_effect = (
+                lambda entry: f"http://example.test/TQLEX?Entry=CWServ.{entry}"
+            )
+
+            def fake_call(entry: str, params: list[str]) -> TqlexResponse:
+                json_data = {"ErrorCode": 0, "ResultSets": [], "ResultSetNum": 0}
+                if entry == "tdxf10_gg_comreq" and params == ["jgcg", "002736"]:
+                    json_data = {
+                        "ErrorCode": 0,
+                        "ResultSets": [
+                            {
+                                "ColDes": [{"Name": "T002"}],
+                                "Content": [["2025-03-31"], ["2024-12-31"]],
+                            }
+                        ],
+                        "ResultSetNum": 1,
+                    }
+                return TqlexResponse(raw_text=json.dumps(json_data), json_data=json_data)
+
+            fake_client.call.side_effect = fake_call
+            stdout = io.StringIO()
+
+            with patch("zxtp.cli.TqlexClient", return_value=fake_client):
+                with redirect_stdout(stdout):
+                    exit_code = main(["fetch-gdyj", "002736", "--data-root", tmp])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(
+                fake_client.call.call_args_list,
+                [
+                    call("tdxf10_gg_gdyj", ["002736", "kggd", "", "", "1", "1", "20"]),
+                    call("tdxf10_gg_gdyj", ["002736", "gdrs", "", "", "1", "1", "20"]),
+                    call(
+                        "tdxf10_gg_gdyj",
+                        ["002736", "thygdrs", "", "", "1", "1", "20"],
+                    ),
+                    call("tdxf10_gg_gdyj", ["002736", "ltgd", "", "", "1", "1", "20"]),
+                    call(
+                        "tdxf10_gg_gdyj",
+                        ["002736", "sdgdbgq", "", "", "1", "1", "20"],
+                    ),
+                    call(
+                        "tdxf10_gg_gdyj",
+                        ["002736", "sdzqcyr", "", "", "1", "1", "20"],
+                    ),
+                    call("tdxf10_gg_gdyj", ["002736", "cgbd", "", "", "1", "1", "20"]),
+                    call("tdxf10_gg_gdyj", ["002736", "jgcg", "", "", "1", "1", "20"]),
+                    call("tdxf10_gg_comreq", ["jgcg", "002736"]),
+                    call(
+                        "tdxf10_gg_gdyj",
+                        ["002736", "jgcgz", "", "2025-03-31", "1", "1", "20"],
+                    ),
+                    call(
+                        "tdxf10_gg_gdyj_jgcgmx",
+                        ["002736", "000", "2025-03-31", "99", "1", "1", "30"],
+                    ),
+                ],
+            )
+            output = stdout.getvalue()
+            self.assertIn("saved gdyj raw JSON", output)
+            expected_paths = [
+                ("tdxf10_gg_gdyj", "kggd"),
+                ("tdxf10_gg_gdyj", "jgcgz"),
+                ("tdxf10_gg_comreq", "jgcg"),
+                ("tdxf10_gg_gdyj_jgcgmx", "jgcgmx"),
+            ]
+            for entry, module in expected_paths:
+                data_path = (
+                    Path(tmp)
+                    / "raw"
+                    / "tqlex"
+                    / entry
+                    / "stock=002736"
+                    / f"module={module}"
+                    / "latest.json"
+                )
+                self.assertTrue(data_path.exists())
+
+    def test_fetch_gdyj_rejects_invalid_stock_code(self) -> None:
+        stderr = io.StringIO()
+
+        with redirect_stderr(stderr):
+            exit_code = main(["fetch-gdyj", "BAD"])
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("stock code must be exactly 6 digits", stderr.getvalue())
+
+
 class CliFetchAllTests(unittest.TestCase):
     def test_fetch_all_writes_every_raw_cache_and_returns_zero(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -539,10 +631,23 @@ class CliFetchAllTests(unittest.TestCase):
             fake_client.source_url.side_effect = (
                 lambda entry: f"http://example.test/TQLEX?Entry=CWServ.{entry}"
             )
-            fake_client.call.return_value = TqlexResponse(
-                raw_text='{"ErrorCode":0,"ResultSets":[],"ResultSetNum":0}',
-                json_data={"ErrorCode": 0, "ResultSets": [], "ResultSetNum": 0},
-            )
+
+            def fake_call(entry: str, params: list[str]) -> TqlexResponse:
+                json_data = {"ErrorCode": 0, "ResultSets": [], "ResultSetNum": 0}
+                if entry == "tdxf10_gg_comreq" and params == ["jgcg", "002736"]:
+                    json_data = {
+                        "ErrorCode": 0,
+                        "ResultSets": [
+                            {
+                                "ColDes": [{"Name": "T002"}],
+                                "Content": [["2025-03-31"], ["2024-12-31"]],
+                            }
+                        ],
+                        "ResultSetNum": 1,
+                    }
+                return TqlexResponse(raw_text=json.dumps(json_data), json_data=json_data)
+
+            fake_client.call.side_effect = fake_call
             stdout = io.StringIO()
 
             with patch("zxtp.cli.TqlexClient", return_value=fake_client):
@@ -562,7 +667,15 @@ class CliFetchAllTests(unittest.TestCase):
             fake_client.call.assert_any_call(
                 "tdxf10_gg_fhrz_zfhpmx", ["zfpg_bgq", "002736", ""]
             )
-            self.assertEqual(fake_client.call.call_count, 60)
+            fake_client.call.assert_any_call(
+                "tdxf10_gg_gdyj", ["002736", "kggd", "", "", "1", "1", "20"]
+            )
+            fake_client.call.assert_any_call("tdxf10_gg_comreq", ["jgcg", "002736"])
+            fake_client.call.assert_any_call(
+                "tdxf10_gg_gdyj_jgcgmx",
+                ["002736", "000", "2025-03-31", "99", "1", "1", "30"],
+            )
+            self.assertEqual(fake_client.call.call_count, 71)
 
             output = stdout.getvalue()
             self.assertIn("开始下载公司概况 gsgk", output)
@@ -587,6 +700,8 @@ class CliFetchAllTests(unittest.TestCase):
                 ("tdxf10_gg_jyfx_jysj", "jysj"),
                 ("tdxf10_gg_fhrz", "pxmz"),
                 ("tdxf10_gg_fhrz_zfhpmx", "zfpg_bgq"),
+                ("tdxf10_gg_gdyj", "kggd"),
+                ("tdxf10_gg_gdyj_jgcgmx", "jgcgmx"),
             ]
             for entry, module in expected_paths:
                 data_path = (
@@ -798,6 +913,53 @@ class CliUiFhrzTests(unittest.TestCase):
             self.assertIn("saved fhrz raw JSON", output)
 
 
+class CliUiGdyjTests(unittest.TestCase):
+    def test_ui_fetches_gdyj_from_menu_choices(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_client = Mock()
+            fake_client.source_url.side_effect = (
+                lambda entry: f"http://example.test/TQLEX?Entry=CWServ.{entry}"
+            )
+
+            def fake_call(entry: str, params: list[str]) -> TqlexResponse:
+                json_data = {"ErrorCode": 0, "ResultSets": [], "ResultSetNum": 0}
+                if entry == "tdxf10_gg_comreq" and params == ["jgcg", "002736"]:
+                    json_data = {
+                        "ErrorCode": 0,
+                        "ResultSets": [
+                            {
+                                "ColDes": [{"Name": "T002"}],
+                                "Content": [["2025-03-31"], ["2024-12-31"]],
+                            }
+                        ],
+                        "ResultSetNum": 1,
+                    }
+                return TqlexResponse(raw_text=json.dumps(json_data), json_data=json_data)
+
+            fake_client.call.side_effect = fake_call
+            inputs = iter(["1", "7", "002736"])
+            stdout = io.StringIO()
+
+            with patch("zxtp.cli.TqlexClient", return_value=fake_client):
+                exit_code = main(
+                    ["ui", "--data-root", tmp],
+                    input_func=lambda prompt="": next(inputs),
+                    output=stdout,
+                )
+
+            self.assertEqual(exit_code, 0)
+            fake_client.call.assert_any_call(
+                "tdxf10_gg_gdyj", ["002736", "kggd", "", "", "1", "1", "20"]
+            )
+            fake_client.call.assert_any_call(
+                "tdxf10_gg_gdyj_jgcgmx",
+                ["002736", "000", "2025-03-31", "99", "1", "1", "30"],
+            )
+            output = stdout.getvalue()
+            self.assertIn("gdyj", output)
+            self.assertIn("saved gdyj raw JSON", output)
+
+
 class CliUiFetchAllTests(unittest.TestCase):
     def test_ui_fetches_all_from_menu_choices(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -805,11 +967,24 @@ class CliUiFetchAllTests(unittest.TestCase):
             fake_client.source_url.side_effect = (
                 lambda entry: f"http://example.test/TQLEX?Entry=CWServ.{entry}"
             )
-            fake_client.call.return_value = TqlexResponse(
-                raw_text='{"ErrorCode":0,"ResultSets":[],"ResultSetNum":0}',
-                json_data={"ErrorCode": 0, "ResultSets": [], "ResultSetNum": 0},
-            )
-            inputs = iter(["1", "7", "002736"])
+
+            def fake_call(entry: str, params: list[str]) -> TqlexResponse:
+                json_data = {"ErrorCode": 0, "ResultSets": [], "ResultSetNum": 0}
+                if entry == "tdxf10_gg_comreq" and params == ["jgcg", "002736"]:
+                    json_data = {
+                        "ErrorCode": 0,
+                        "ResultSets": [
+                            {
+                                "ColDes": [{"Name": "T002"}],
+                                "Content": [["2025-03-31"], ["2024-12-31"]],
+                            }
+                        ],
+                        "ResultSetNum": 1,
+                    }
+                return TqlexResponse(raw_text=json.dumps(json_data), json_data=json_data)
+
+            fake_client.call.side_effect = fake_call
+            inputs = iter(["1", "8", "002736"])
             stdout = io.StringIO()
 
             with patch("zxtp.cli.TqlexClient", return_value=fake_client):
@@ -826,7 +1001,14 @@ class CliUiFetchAllTests(unittest.TestCase):
             fake_client.call.assert_any_call("tdxf10_gg_hyfx", ["tot", "002736", ""])
             fake_client.call.assert_any_call("tdxf10_gg_jyfx", ["002736", "zyyw", ""])
             fake_client.call.assert_any_call("tdxf10_gg_fhrz", ["002736", "pxmz"])
-            self.assertEqual(fake_client.call.call_count, 60)
+            fake_client.call.assert_any_call(
+                "tdxf10_gg_gdyj", ["002736", "kggd", "", "", "1", "1", "20"]
+            )
+            fake_client.call.assert_any_call(
+                "tdxf10_gg_gdyj_jgcgmx",
+                ["002736", "000", "2025-03-31", "99", "1", "1", "30"],
+            )
+            self.assertEqual(fake_client.call.call_count, 71)
             output = stdout.getvalue()
             self.assertIn("all", output)
             self.assertIn("开始下载公司概况 gsgk", output)

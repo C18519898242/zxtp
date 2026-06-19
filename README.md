@@ -134,10 +134,11 @@ uv run python -m zxtp ui
 uv run python -m zxtp fetch-gsgk 002736
 uv run python -m zxtp fetch-jyfx 002736
 uv run python -m zxtp fetch-fhrz 002736
+uv run python -m zxtp fetch-gdyj 002736
 uv run python -m zxtp fetch-all 002736
 ```
 
-其中 `ui` 是给人使用的交互式菜单入口；`fetch-gsgk` / `fetch-jyfx` / `fetch-fhrz` 是单模块参数式入口；`fetch-all` 会一次下载公司概况、研报评级、财务分析、经营分析、分红融资和行业分析的 raw JSON，并在下载完成后自动生成 AI Context。
+其中 `ui` 是给人使用的交互式菜单入口；`fetch-gsgk` / `fetch-jyfx` / `fetch-fhrz` / `fetch-gdyj` 是单模块参数式入口；`fetch-all` 会一次下载公司概况、研报评级、财务分析、经营分析、分红融资、行业分析和股东研究的 raw JSON，并在下载完成后自动生成 AI Context。
 
 运行测试：
 

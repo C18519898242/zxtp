@@ -70,6 +70,24 @@ FHRZ_ZFHPMX_ENTRY = "tdxf10_gg_fhrz_zfhpmx"
 FHRZ_ZFPG_DATE_MODULE = "zfpg_bgq"
 FHRZ_ZFPG_MODULE = "zfpg"
 FHRZ_TRAILING_MODULES = ("zf", "gqjl", "kzzdfxyss")
+GDYJ_ENTRY = "tdxf10_gg_gdyj"
+GDYJ_MODULES = (
+    "kggd",
+    "gdrs",
+    "thygdrs",
+    "ltgd",
+    "sdgdbgq",
+    "sdzqcyr",
+    "cgbd",
+    "jgcg",
+)
+GDYJ_JGCG_DATE_MODULE = "jgcg"
+GDYJ_JGCGZ_MODULE = "jgcgz"
+GDYJ_JGCGMX_ENTRY = "tdxf10_gg_gdyj_jgcgmx"
+GDYJ_JGCGMX_MODULE = "jgcgmx"
+GDYJ_ALL_INSTITUTION_TYPE = "99"
+GDYJ_JGCGMX_DEFAULT_SORT = "000"
+GDYJ_JGCGMX_PAGE_PARAMS = ("1", "1", "30")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -142,6 +160,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fetch_fhrz.add_argument("stock_code")
     fetch_fhrz.add_argument(
+        "--data-root",
+        type=Path,
+        default=None,
+        help="Data root directory. Overrides config.toml [data].root.",
+    )
+
+    fetch_gdyj = subparsers.add_parser(
+        "fetch-gdyj",
+        help="Fetch TQLEX shareholder research raw JSON for one stock.",
+    )
+    fetch_gdyj.add_argument("stock_code")
+    fetch_gdyj.add_argument(
         "--data-root",
         type=Path,
         default=None,
@@ -428,6 +458,71 @@ def fetch_fhrz(stock_code: str, data_root: Path) -> list[Path]:
     return data_paths
 
 
+def fetch_gdyj(stock_code: str, data_root: Path) -> list[Path]:
+    valid_stock_code = validate_stock_code(stock_code)
+    client = TqlexClient()
+    data_paths = []
+
+    for module in GDYJ_MODULES:
+        data_paths.append(
+            fetch_tqlex_raw(
+                entry=GDYJ_ENTRY,
+                params=[valid_stock_code, module, "", "", "1", "1", "20"],
+                stock_code=valid_stock_code,
+                module=module,
+                data_root=data_root,
+                client=client,
+            )
+        )
+
+    date_path, date_json = fetch_tqlex_raw_json(
+        entry=CWFX_BDSM_ENTRY,
+        params=[GDYJ_JGCG_DATE_MODULE, valid_stock_code],
+        stock_code=valid_stock_code,
+        module=GDYJ_JGCG_DATE_MODULE,
+        data_root=data_root,
+        client=client,
+    )
+    data_paths.append(date_path)
+    latest_date = first_result_value(date_json, ("T002", "rq", "date"))
+    data_paths.append(
+        fetch_tqlex_raw(
+            entry=GDYJ_ENTRY,
+            params=[
+                valid_stock_code,
+                GDYJ_JGCGZ_MODULE,
+                "",
+                latest_date,
+                "1",
+                "1",
+                "20",
+            ],
+            stock_code=valid_stock_code,
+            module=GDYJ_JGCGZ_MODULE,
+            data_root=data_root,
+            client=client,
+        )
+    )
+    data_paths.append(
+        fetch_tqlex_raw(
+            entry=GDYJ_JGCGMX_ENTRY,
+            params=[
+                valid_stock_code,
+                GDYJ_JGCGMX_DEFAULT_SORT,
+                latest_date,
+                GDYJ_ALL_INSTITUTION_TYPE,
+                *GDYJ_JGCGMX_PAGE_PARAMS,
+            ],
+            stock_code=valid_stock_code,
+            module=GDYJ_JGCGMX_MODULE,
+            data_root=data_root,
+            client=client,
+        )
+    )
+
+    return data_paths
+
+
 def first_result_value(json_data: dict[str, Any], keys: tuple[str, ...]) -> str:
     result_sets = json_data.get("ResultSets", [])
     if not isinstance(result_sets, list):
@@ -489,6 +584,9 @@ def fetch_all(stock_code: str, data_root: Path) -> list[tuple[str, Path]]:
     data_paths.extend(
         ("hyfx", data_path) for data_path in fetch_hyfx(stock_code, data_root)
     )
+    data_paths.extend(
+        ("gdyj", data_path) for data_path in fetch_gdyj(stock_code, data_root)
+    )
 
     return data_paths
 
@@ -519,6 +617,10 @@ def run_fetch_all(stock_code: str, data_root: Path, output_stream: TextIO) -> Pa
     print("开始下载行业分析 hyfx...", file=output_stream)
     for data_path in fetch_hyfx(valid_stock_code, data_root):
         print(f"saved hyfx raw JSON: {data_path}", file=output_stream)
+
+    print("开始下载股东研究 gdyj...", file=output_stream)
+    for data_path in fetch_gdyj(valid_stock_code, data_root):
+        print(f"saved gdyj raw JSON: {data_path}", file=output_stream)
 
     print("开始生成 AI Context...", file=output_stream)
     output_path = generate_full_context(valid_stock_code, data_root)
@@ -568,14 +670,15 @@ def run_ui(
             print("4. 行业分析 hyfx", file=output_stream)
             print("5. 经营分析 jyfx", file=output_stream)
             print("6. 分红融资 fhrz", file=output_stream)
-            print("7. 全部下载 all", file=output_stream)
+            print("7. 股东研究 gdyj", file=output_stream)
+            print("8. 全部下载 all", file=output_stream)
             print("0. 返回", file=output_stream)
             module = input_func("> ").strip()
 
             if module == "0":
                 print("已返回", file=output_stream)
                 return 0
-            if module not in {"1", "2", "3", "4", "5", "6", "7"}:
+            if module not in {"1", "2", "3", "4", "5", "6", "7", "8"}:
                 raise TqlexError("unsupported module choice")
 
             print("", file=output_stream)
@@ -624,6 +727,13 @@ def run_ui(
                     print(f"saved fhrz raw JSON: {data_path}", file=output_stream)
                 return 0
 
+            if module == "7":
+                print("", file=output_stream)
+                print("开始下载股东研究 gdyj...", file=output_stream)
+                for data_path in fetch_gdyj(stock_code, data_root):
+                    print(f"saved gdyj raw JSON: {data_path}", file=output_stream)
+                return 0
+
             print("", file=output_stream)
             print("开始全部下载 all...", file=output_stream)
             run_fetch_all(stock_code, data_root, output_stream)
@@ -670,6 +780,10 @@ def main(
         if args.command == "fetch-fhrz":
             for data_path in fetch_fhrz(args.stock_code, data_root):
                 print(f"saved fhrz raw JSON: {data_path}", file=output_stream)
+            return 0
+        if args.command == "fetch-gdyj":
+            for data_path in fetch_gdyj(args.stock_code, data_root):
+                print(f"saved gdyj raw JSON: {data_path}", file=output_stream)
             return 0
         if args.command == "fetch-all":
             run_fetch_all(args.stock_code, data_root, output_stream)

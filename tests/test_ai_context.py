@@ -47,6 +47,8 @@ class AiContextGenerationTests(unittest.TestCase):
             self.assertIn("tdxf10_gg_hyfx", text)
             self.assertIn("tdxf10_gg_jyfx", text)
             self.assertIn("tdxf10_gg_fhrz", text)
+            self.assertIn("tdxf10_gg_gdyj", text)
+            self.assertIn("tdxf10_gg_gdyj_jgcgmx", text)
             self.assertIn("缺失", text)
 
 

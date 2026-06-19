@@ -104,6 +104,20 @@ INDUSTRY_ANALYSIS_SOURCES = (
     RawSource("分红融资比", "tdxf10_gg_hyfx", "fhrzb"),
 )
 
+SHAREHOLDER_RESEARCH_SOURCES = (
+    RawSource("控股股东与实际控制人", "tdxf10_gg_gdyj", "kggd"),
+    RawSource("股东人数", "tdxf10_gg_gdyj", "gdrs"),
+    RawSource("同行业股东人数排名", "tdxf10_gg_gdyj", "thygdrs"),
+    RawSource("十大流通股东", "tdxf10_gg_gdyj", "ltgd"),
+    RawSource("十大股东", "tdxf10_gg_gdyj", "sdgdbgq"),
+    RawSource("十大债券持有人", "tdxf10_gg_gdyj", "sdzqcyr"),
+    RawSource("重要股东增减持", "tdxf10_gg_gdyj", "cgbd"),
+    RawSource("机构持股汇总", "tdxf10_gg_gdyj", "jgcg"),
+    RawSource("机构持股日期", "tdxf10_gg_comreq", "jgcg"),
+    RawSource("机构持股构成", "tdxf10_gg_gdyj", "jgcgz"),
+    RawSource("机构持股明细", "tdxf10_gg_gdyj_jgcgmx", "jgcgmx"),
+)
+
 
 def generate_full_context(stock_code: str, data_root: Path) -> Path:
     valid_stock_code = validate_stock_code(stock_code)
@@ -128,6 +142,9 @@ def generate_full_context(stock_code: str, data_root: Path) -> Path:
     industry_statuses = source_statuses(
         data_root, valid_stock_code, INDUSTRY_ANALYSIS_SOURCES
     )
+    shareholder_statuses = source_statuses(
+        data_root, valid_stock_code, SHAREHOLDER_RESEARCH_SOURCES
+    )
     all_statuses = (
         company_statuses
         + financial_statuses
@@ -135,6 +152,7 @@ def generate_full_context(stock_code: str, data_root: Path) -> Path:
         + dividend_statuses
         + research_statuses
         + industry_statuses
+        + shareholder_statuses
     )
 
     template = load_template()
@@ -150,6 +168,7 @@ def generate_full_context(stock_code: str, data_root: Path) -> Path:
             "dividend_financing_sources": render_sources(dividend_statuses),
             "research_rating_sources": render_sources(research_statuses),
             "industry_analysis_sources": render_sources(industry_statuses),
+            "shareholder_research_sources": render_sources(shareholder_statuses),
             "all_sources": render_sources(all_statuses),
         },
     )
