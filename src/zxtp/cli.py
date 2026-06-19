@@ -11,6 +11,8 @@ from .tqlex import RawCacheWriter, TqlexClient, TqlexError, validate_stock_code
 GSGK_ENTRY = "tdxf10_gg_gsgk"
 GSGK_MODULE = "gsgk"
 GSGK_PARAM_KIND = "0"
+YBPJ_ENTRY = "tdxf10_gg_ybpj"
+YBPJ_MODULES = ("tzpjtj", "yzyq", "ylyctj", "ylycmx", "ycpjyjbg")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -23,6 +25,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fetch_gsgk.add_argument("stock_code")
     fetch_gsgk.add_argument(
+        "--data-root",
+        type=Path,
+        default=Path("data"),
+        help="Data root directory. Defaults to ./data.",
+    )
+
+    fetch_ybpj = subparsers.add_parser(
+        "fetch-ybpj",
+        help="Fetch TQLEX research rating raw JSON for one stock.",
+    )
+    fetch_ybpj.add_argument("stock_code")
+    fetch_ybpj.add_argument(
         "--data-root",
         type=Path,
         default=Path("data"),
@@ -43,22 +57,61 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def fetch_tqlex_raw(
+    *,
+    entry: str,
+    params: list[str],
+    stock_code: str,
+    module: str,
+    data_root: Path,
+    client: TqlexClient,
+) -> Path:
+    response = client.call(entry, params)
+
+    writer = RawCacheWriter(data_root)
+    paths = writer.write(
+        entry=entry,
+        params=params,
+        stock_code=stock_code,
+        module=module,
+        source_url=client.source_url(entry),
+        json_data=response.json_data,
+    )
+    return paths.data_path
+
+
 def fetch_gsgk(stock_code: str, data_root: Path) -> Path:
     valid_stock_code = validate_stock_code(stock_code)
     params = [GSGK_PARAM_KIND, valid_stock_code, ""]
     client = TqlexClient()
-    response = client.call(GSGK_ENTRY, params)
-
-    writer = RawCacheWriter(data_root)
-    paths = writer.write(
+    return fetch_tqlex_raw(
         entry=GSGK_ENTRY,
         params=params,
         stock_code=valid_stock_code,
         module=GSGK_MODULE,
-        source_url=client.source_url(GSGK_ENTRY),
-        json_data=response.json_data,
+        data_root=data_root,
+        client=client,
     )
-    return paths.data_path
+
+
+def fetch_ybpj(stock_code: str, data_root: Path) -> list[Path]:
+    valid_stock_code = validate_stock_code(stock_code)
+    client = TqlexClient()
+    data_paths = []
+
+    for module in YBPJ_MODULES:
+        data_paths.append(
+            fetch_tqlex_raw(
+                entry=YBPJ_ENTRY,
+                params=[valid_stock_code, module],
+                stock_code=valid_stock_code,
+                module=module,
+                data_root=data_root,
+                client=client,
+            )
+        )
+
+    return data_paths
 
 
 def run_ui(
@@ -85,23 +138,31 @@ def run_ui(
     print("", file=output_stream)
     print("请选择数据模块：", file=output_stream)
     print("1. 公司概况 gsgk", file=output_stream)
+    print("2. 研报评级 ybpj", file=output_stream)
     print("0. 返回", file=output_stream)
     module = input_func("> ").strip()
 
     if module == "0":
         print("已返回", file=output_stream)
         return 0
-    if module != "1":
+    if module not in {"1", "2"}:
         raise TqlexError("unsupported module choice")
 
     print("", file=output_stream)
     print("请输入股票代码：", file=output_stream)
     stock_code = input_func("> ").strip()
 
+    if module == "1":
+        print("", file=output_stream)
+        print("开始下载公司概况 gsgk...", file=output_stream)
+        data_path = fetch_gsgk(stock_code, data_root)
+        print(f"saved gsgk raw JSON: {data_path}", file=output_stream)
+        return 0
+
     print("", file=output_stream)
-    print("开始下载公司概况 gsgk...", file=output_stream)
-    data_path = fetch_gsgk(stock_code, data_root)
-    print(f"saved gsgk raw JSON: {data_path}", file=output_stream)
+    print("开始下载研报评级 ybpj...", file=output_stream)
+    for data_path in fetch_ybpj(stock_code, data_root):
+        print(f"saved ybpj raw JSON: {data_path}", file=output_stream)
     return 0
 
 
@@ -121,6 +182,10 @@ def main(
         if args.command == "fetch-gsgk":
             data_path = fetch_gsgk(args.stock_code, args.data_root)
             print(f"saved gsgk raw JSON: {data_path}", file=output_stream)
+            return 0
+        if args.command == "fetch-ybpj":
+            for data_path in fetch_ybpj(args.stock_code, args.data_root):
+                print(f"saved ybpj raw JSON: {data_path}", file=output_stream)
             return 0
         if args.command == "ui":
             run_ui(args.data_root, input_func=input_func, output=output_stream)
