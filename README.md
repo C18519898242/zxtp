@@ -114,6 +114,7 @@ Python CLI
 ```text
 pyproject.toml  # 项目声明，类似 pom.xml / build.gradle
 uv.lock         # 锁定依赖解析结果，类似 package-lock.json
+config.toml     # 应用配置，当前用于配置数据目录
 .venv/          # uv 创建的本地虚拟环境，通常不提交到 Git
 ```
 
@@ -150,6 +151,30 @@ python -m unittest discover -s tests -v
 ```
 
 但长期建议使用 `uv run ...`，这样不需要手动处理 `PYTHONPATH`，也更容易保证不同机器上的依赖环境一致。
+
+## 配置文件
+
+ZXTP 会在当前工作目录读取可选的 `config.toml`。如果没有该文件，数据目录默认使用 `data/`。
+
+当前支持的配置：
+
+```toml
+[data]
+root = "data"
+```
+
+`data.root` 可以配置为相对路径或绝对路径。相对路径按 `config.toml` 所在目录解析。例如：
+
+```toml
+[data]
+root = "D:/stock-data/zxtp"
+```
+
+命令行参数 `--data-root` 优先级更高，会覆盖 `config.toml`：
+
+```powershell
+python -m zxtp fetch-gsgk 002736 --data-root D:/tmp/zxtp-data
+```
 
 ## 为什么用 DuckDB
 

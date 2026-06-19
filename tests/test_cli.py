@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -11,6 +12,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from zxtp.cli import main
 from zxtp.tqlex import TqlexResponse
+
+
+class WorkingDirectory:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.previous: Path | None = None
+
+    def __enter__(self) -> None:
+        self.previous = Path.cwd()
+        os.chdir(self.path)
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        if self.previous is not None:
+            os.chdir(self.previous)
 
 
 class CliFetchGsgkTests(unittest.TestCase):
@@ -59,6 +74,77 @@ class CliFetchGsgkTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 1)
         self.assertIn("stock code must be exactly 6 digits", stderr.getvalue())
+
+    def test_fetch_gsgk_uses_configured_data_root_when_no_cli_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            (workspace / "config.toml").write_text(
+                '[data]\nroot = "configured-data"\n',
+                encoding="utf-8",
+            )
+            fake_client = Mock()
+            fake_client.source_url.return_value = (
+                "http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_gsgk"
+            )
+            fake_client.call.return_value = TqlexResponse(
+                raw_text='{"ErrorCode":0,"ResultSets":[],"ResultSetNum":0}',
+                json_data={"ErrorCode": 0, "ResultSets": [], "ResultSetNum": 0},
+            )
+
+            with WorkingDirectory(workspace):
+                with patch("zxtp.cli.TqlexClient", return_value=fake_client):
+                    exit_code = main(["fetch-gsgk", "002736"])
+
+            self.assertEqual(exit_code, 0)
+            self.assertTrue(
+                (
+                    workspace
+                    / "configured-data"
+                    / "raw"
+                    / "tqlex"
+                    / "tdxf10_gg_gsgk"
+                    / "stock=002736"
+                    / "module=gsgk"
+                    / "latest.json"
+                ).exists()
+            )
+
+    def test_fetch_gsgk_data_root_argument_overrides_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            explicit_root = workspace / "explicit-data"
+            (workspace / "config.toml").write_text(
+                '[data]\nroot = "configured-data"\n',
+                encoding="utf-8",
+            )
+            fake_client = Mock()
+            fake_client.source_url.return_value = (
+                "http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_gsgk"
+            )
+            fake_client.call.return_value = TqlexResponse(
+                raw_text='{"ErrorCode":0,"ResultSets":[],"ResultSetNum":0}',
+                json_data={"ErrorCode": 0, "ResultSets": [], "ResultSetNum": 0},
+            )
+
+            with WorkingDirectory(workspace):
+                with patch("zxtp.cli.TqlexClient", return_value=fake_client):
+                    exit_code = main(
+                        ["fetch-gsgk", "002736", "--data-root", str(explicit_root)]
+                    )
+
+            self.assertEqual(exit_code, 0)
+            self.assertTrue(
+                (
+                    explicit_root
+                    / "raw"
+                    / "tqlex"
+                    / "tdxf10_gg_gsgk"
+                    / "stock=002736"
+                    / "module=gsgk"
+                    / "latest.json"
+                ).exists()
+            )
+            self.assertFalse((workspace / "configured-data").exists())
 
 
 class CliFetchYbpjTests(unittest.TestCase):

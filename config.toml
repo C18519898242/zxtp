@@ -1,0 +1,7 @@
+# ZXTP application configuration.
+#
+# If this file is missing, ZXTP uses "data" by default.
+# Command line --data-root always overrides this value.
+
+[data]
+root = "D:/zxtp_data"

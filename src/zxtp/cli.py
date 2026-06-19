@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Callable, Sequence, TextIO
 
 from .ai_context import generate_full_context
+from .config import resolve_data_root
 from .tqlex import RawCacheWriter, TqlexClient, TqlexError, validate_stock_code
 
 
@@ -57,8 +58,8 @@ def build_parser() -> argparse.ArgumentParser:
     fetch_gsgk.add_argument(
         "--data-root",
         type=Path,
-        default=Path("data"),
-        help="Data root directory. Defaults to ./data.",
+        default=None,
+        help="Data root directory. Overrides config.toml [data].root.",
     )
 
     fetch_ybpj = subparsers.add_parser(
@@ -69,8 +70,8 @@ def build_parser() -> argparse.ArgumentParser:
     fetch_ybpj.add_argument(
         "--data-root",
         type=Path,
-        default=Path("data"),
-        help="Data root directory. Defaults to ./data.",
+        default=None,
+        help="Data root directory. Overrides config.toml [data].root.",
     )
 
     fetch_cwfx = subparsers.add_parser(
@@ -81,8 +82,8 @@ def build_parser() -> argparse.ArgumentParser:
     fetch_cwfx.add_argument(
         "--data-root",
         type=Path,
-        default=Path("data"),
-        help="Data root directory. Defaults to ./data.",
+        default=None,
+        help="Data root directory. Overrides config.toml [data].root.",
     )
 
     fetch_hyfx = subparsers.add_parser(
@@ -93,8 +94,8 @@ def build_parser() -> argparse.ArgumentParser:
     fetch_hyfx.add_argument(
         "--data-root",
         type=Path,
-        default=Path("data"),
-        help="Data root directory. Defaults to ./data.",
+        default=None,
+        help="Data root directory. Overrides config.toml [data].root.",
     )
 
     export_ai_context = subparsers.add_parser(
@@ -105,8 +106,8 @@ def build_parser() -> argparse.ArgumentParser:
     export_ai_context.add_argument(
         "--data-root",
         type=Path,
-        default=Path("data"),
-        help="Data root directory. Defaults to ./data.",
+        default=None,
+        help="Data root directory. Overrides config.toml [data].root.",
     )
 
     ui = subparsers.add_parser(
@@ -116,8 +117,8 @@ def build_parser() -> argparse.ArgumentParser:
     ui.add_argument(
         "--data-root",
         type=Path,
-        default=Path("data"),
-        help="Data root directory. Defaults to ./data.",
+        default=None,
+        help="Data root directory. Overrides config.toml [data].root.",
     )
 
     return parser
@@ -333,28 +334,29 @@ def main(
     args = parser.parse_args(argv)
 
     try:
+        data_root = resolve_data_root(getattr(args, "data_root", None))
         if args.command == "fetch-gsgk":
-            data_path = fetch_gsgk(args.stock_code, args.data_root)
+            data_path = fetch_gsgk(args.stock_code, data_root)
             print(f"saved gsgk raw JSON: {data_path}", file=output_stream)
             return 0
         if args.command == "fetch-ybpj":
-            for data_path in fetch_ybpj(args.stock_code, args.data_root):
+            for data_path in fetch_ybpj(args.stock_code, data_root):
                 print(f"saved ybpj raw JSON: {data_path}", file=output_stream)
             return 0
         if args.command == "fetch-cwfx":
-            for data_path in fetch_cwfx(args.stock_code, args.data_root):
+            for data_path in fetch_cwfx(args.stock_code, data_root):
                 print(f"saved cwfx raw JSON: {data_path}", file=output_stream)
             return 0
         if args.command == "fetch-hyfx":
-            for data_path in fetch_hyfx(args.stock_code, args.data_root):
+            for data_path in fetch_hyfx(args.stock_code, data_root):
                 print(f"saved hyfx raw JSON: {data_path}", file=output_stream)
             return 0
         if args.command == "export-ai-context":
-            output_path = generate_full_context(args.stock_code, args.data_root)
+            output_path = generate_full_context(args.stock_code, data_root)
             print(f"saved AI context Markdown: {output_path}", file=output_stream)
             return 0
         if args.command == "ui":
-            run_ui(args.data_root, input_func=input_func, output=output_stream)
+            run_ui(data_root, input_func=input_func, output=output_stream)
             return 0
     except TqlexError as exc:
         print(f"error: {exc}", file=error_stream)
