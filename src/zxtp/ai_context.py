@@ -6,6 +6,8 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
+import duckdb
+
 from .tqlex import RawCacheWriter, now_shanghai_iso, validate_stock_code
 
 
@@ -28,6 +30,34 @@ class RawSourceStatus:
 
 COMPANY_OVERVIEW_SOURCES = (
     RawSource("公司概况", "tdxf10_gg_gsgk", "gsgk"),
+)
+
+COMPANY_OVERVIEW_DISPLAY_FIELDS = (
+    ("公司名称", "name"),
+    ("英文名称", "english_name"),
+    ("所属板块", "board"),
+    ("所属行业", "industry"),
+    ("主营业务", "business_summary"),
+    ("产品与服务", "products"),
+    ("控股股东", "controlling_shareholder"),
+    ("董事长", "chairman"),
+    ("总经理", "general_manager"),
+    ("法定代表人", "legal_representative"),
+    ("董事会秘书", "board_secretary"),
+    ("员工人数", "employee_count"),
+    ("公司网站", "website"),
+    ("联系电话", "phone"),
+    ("电子邮箱", "email"),
+    ("注册地址", "registered_address"),
+    ("办公地址", "office_address"),
+    ("公司简介", "company_profile"),
+    ("经营范围", "business_scope"),
+    ("原始数据抓取时间", "source_fetched_at"),
+    ("结构化写入时间", "structured_at"),
+)
+
+COMPANY_OVERVIEW_SELECT = ", ".join(
+    field for _, field in COMPANY_OVERVIEW_DISPLAY_FIELDS
 )
 
 FINANCIAL_ANALYSIS_SOURCES = (
@@ -127,6 +157,7 @@ def generate_full_context(stock_code: str, data_root: Path) -> Path:
     company_statuses = source_statuses(
         data_root, valid_stock_code, COMPANY_OVERVIEW_SOURCES
     )
+    company_overview = render_company_overview(data_root, valid_stock_code)
     financial_statuses = source_statuses(
         data_root, valid_stock_code, FINANCIAL_ANALYSIS_SOURCES
     )
@@ -162,6 +193,7 @@ def generate_full_context(stock_code: str, data_root: Path) -> Path:
             "stock_code": valid_stock_code,
             "generated_at": generated_at,
             "coverage_summary": coverage_summary(all_statuses),
+            "company_overview": company_overview,
             "company_overview_sources": render_sources(company_statuses),
             "financial_analysis_sources": render_sources(financial_statuses),
             "business_analysis_sources": render_sources(business_statuses),
@@ -179,6 +211,42 @@ def generate_full_context(stock_code: str, data_root: Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(rendered, encoding="utf-8")
     return output_path
+
+
+def render_company_overview(data_root: Path, stock_code: str) -> str:
+    database_path = data_root / "warehouse" / "research.duckdb"
+    if not database_path.exists():
+        return "暂无结构化公司概况。请先下载公司概况数据。"
+
+    try:
+        with duckdb.connect(str(database_path), read_only=True) as connection:
+            row = connection.execute(
+                f"SELECT {COMPANY_OVERVIEW_SELECT} "
+                "FROM company_overviews WHERE stock_code = ?",
+                [stock_code],
+            ).fetchone()
+    except duckdb.Error:
+        return (
+            "结构化公司概况暂不可读取：DuckDB 数据库可能正被其他程序占用。"
+            "请断开 DBeaver 连接后重新生成 AI Context。"
+        )
+
+    if row is None:
+        return "暂无结构化公司概况。请先下载公司概况数据。"
+
+    details = []
+    for index, (label, _) in enumerate(COMPANY_OVERVIEW_DISPLAY_FIELDS):
+        value = format_context_value(row[index])
+        if value is not None:
+            details.append(f"- {label}：{value}")
+    return "\n".join(details)
+
+
+def format_context_value(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).replace("\r", " ").replace("\n", " ").strip()
+    return text or None
 
 
 def source_statuses(

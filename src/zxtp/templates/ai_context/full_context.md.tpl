@@ -16,7 +16,7 @@ data_version: 1
 
 ## 2. 公司概况
 
-暂无结构化摘要。后续 parser 完成后，本节用于展示主营业务、行业、股本结构和公司基础资料。
+{company_overview}
 
 ### Raw 来源
 
