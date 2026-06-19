@@ -360,6 +360,83 @@ class CliFetchHyfxTests(unittest.TestCase):
         self.assertIn("stock code must be exactly 6 digits", stderr.getvalue())
 
 
+class CliFetchAllTests(unittest.TestCase):
+    def test_fetch_all_writes_every_raw_cache_and_returns_zero(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_client = Mock()
+            fake_client.source_url.side_effect = (
+                lambda entry: f"http://example.test/TQLEX?Entry=CWServ.{entry}"
+            )
+            fake_client.call.return_value = TqlexResponse(
+                raw_text='{"ErrorCode":0,"ResultSets":[],"ResultSetNum":0}',
+                json_data={"ErrorCode": 0, "ResultSets": [], "ResultSetNum": 0},
+            )
+            stdout = io.StringIO()
+
+            with patch("zxtp.cli.TqlexClient", return_value=fake_client):
+                with redirect_stdout(stdout):
+                    exit_code = main(["fetch-all", "002736", "--data-root", tmp])
+
+            self.assertEqual(exit_code, 0)
+            fake_client.call.assert_any_call("tdxf10_gg_gsgk", ["0", "002736", ""])
+            fake_client.call.assert_any_call("tdxf10_gg_ybpj", ["002736", "tzpjtj"])
+            fake_client.call.assert_any_call("tdxf10_gg_cwfx", ["002736", "gptype", ""])
+            fake_client.call.assert_any_call("tdxf10_gg_comreq", ["bdsm", "002736"])
+            fake_client.call.assert_any_call("tdxf10_gg_cwfx_cbdp", ["002736", "1"])
+            fake_client.call.assert_any_call("tdxf10_gg_hyfx", ["tot", "002736", ""])
+            self.assertEqual(fake_client.call.call_count, 36)
+
+            output = stdout.getvalue()
+            self.assertIn("开始下载公司概况 gsgk", output)
+            self.assertIn("开始下载研报评级 ybpj", output)
+            self.assertIn("开始下载财务分析 cwfx", output)
+            self.assertIn("开始下载行业分析 hyfx", output)
+            self.assertIn("saved gsgk raw JSON", output)
+            self.assertIn("saved ybpj raw JSON", output)
+            self.assertIn("saved cwfx raw JSON", output)
+            self.assertIn("saved hyfx raw JSON", output)
+            self.assertIn("开始生成 AI Context", output)
+            self.assertIn("saved AI context Markdown", output)
+
+            expected_paths = [
+                ("tdxf10_gg_gsgk", "gsgk"),
+                ("tdxf10_gg_ybpj", "tzpjtj"),
+                ("tdxf10_gg_cwfx", "gptype"),
+                ("tdxf10_gg_comreq", "bdsm"),
+                ("tdxf10_gg_cwfx_cbdp", "cbdp"),
+                ("tdxf10_gg_hyfx", "tot"),
+            ]
+            for entry, module in expected_paths:
+                data_path = (
+                    Path(tmp)
+                    / "raw"
+                    / "tqlex"
+                    / entry
+                    / "stock=002736"
+                    / f"module={module}"
+                    / "latest.json"
+                )
+                self.assertTrue(data_path.exists())
+            self.assertTrue(
+                (
+                    Path(tmp)
+                    / "exports"
+                    / "ai_context"
+                    / "002736"
+                    / "full_context.md"
+                ).exists()
+            )
+
+    def test_fetch_all_rejects_invalid_stock_code(self) -> None:
+        stderr = io.StringIO()
+
+        with redirect_stderr(stderr):
+            exit_code = main(["fetch-all", "BAD"])
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("stock code must be exactly 6 digits", stderr.getvalue())
+
+
 class CliExportAiContextTests(unittest.TestCase):
     def test_export_ai_context_writes_full_context_markdown(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -477,6 +554,68 @@ class CliUiHyfxTests(unittest.TestCase):
             output = stdout.getvalue()
             self.assertIn("hyfx", output)
             self.assertIn("saved hyfx raw JSON", output)
+
+
+class CliUiFetchAllTests(unittest.TestCase):
+    def test_ui_fetches_all_from_menu_choices(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_client = Mock()
+            fake_client.source_url.side_effect = (
+                lambda entry: f"http://example.test/TQLEX?Entry=CWServ.{entry}"
+            )
+            fake_client.call.return_value = TqlexResponse(
+                raw_text='{"ErrorCode":0,"ResultSets":[],"ResultSetNum":0}',
+                json_data={"ErrorCode": 0, "ResultSets": [], "ResultSetNum": 0},
+            )
+            inputs = iter(["1", "5", "002736"])
+            stdout = io.StringIO()
+
+            with patch("zxtp.cli.TqlexClient", return_value=fake_client):
+                exit_code = main(
+                    ["ui", "--data-root", tmp],
+                    input_func=lambda prompt="": next(inputs),
+                    output=stdout,
+                )
+
+            self.assertEqual(exit_code, 0)
+            fake_client.call.assert_any_call("tdxf10_gg_gsgk", ["0", "002736", ""])
+            fake_client.call.assert_any_call("tdxf10_gg_ybpj", ["002736", "tzpjtj"])
+            fake_client.call.assert_any_call("tdxf10_gg_cwfx", ["002736", "gptype", ""])
+            fake_client.call.assert_any_call("tdxf10_gg_hyfx", ["tot", "002736", ""])
+            self.assertEqual(fake_client.call.call_count, 36)
+            output = stdout.getvalue()
+            self.assertIn("all", output)
+            self.assertIn("开始下载公司概况 gsgk", output)
+            self.assertIn("开始下载研报评级 ybpj", output)
+            self.assertIn("开始下载财务分析 cwfx", output)
+            self.assertIn("开始下载行业分析 hyfx", output)
+            self.assertIn("saved gsgk raw JSON", output)
+            self.assertIn("saved ybpj raw JSON", output)
+            self.assertIn("saved cwfx raw JSON", output)
+            self.assertIn("saved hyfx raw JSON", output)
+            self.assertIn("开始生成 AI Context", output)
+            self.assertIn("saved AI context Markdown", output)
+
+
+class CliUiInputErrorTests(unittest.TestCase):
+    def test_ui_shows_hint_and_returns_to_menu_when_stock_code_is_invalid(self) -> None:
+        fake_client = Mock()
+        inputs = iter(["1", "5", "6000011", "0"])
+        stdout = io.StringIO()
+
+        with patch("zxtp.cli.TqlexClient", return_value=fake_client):
+            exit_code = main(
+                ["ui"],
+                input_func=lambda prompt="": next(inputs),
+                output=stdout,
+            )
+
+        self.assertEqual(exit_code, 0)
+        fake_client.call.assert_not_called()
+        output = stdout.getvalue()
+        self.assertIn("提示: stock code must be exactly 6 digits", output)
+        self.assertIn("请选择操作：", output)
+        self.assertIn("已退出", output)
 
 
 class CliUiAiContextTests(unittest.TestCase):

@@ -98,6 +98,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Data root directory. Overrides config.toml [data].root.",
     )
 
+    fetch_all = subparsers.add_parser(
+        "fetch-all",
+        help="Fetch all supported TQLEX raw JSON modules for one stock.",
+    )
+    fetch_all.add_argument("stock_code")
+    fetch_all.add_argument(
+        "--data-root",
+        type=Path,
+        default=None,
+        help="Data root directory. Overrides config.toml [data].root.",
+    )
+
     export_ai_context = subparsers.add_parser(
         "export-ai-context",
         help="Generate stock-first AI context Markdown from local raw cache.",
@@ -242,6 +254,48 @@ def fetch_hyfx(stock_code: str, data_root: Path) -> list[Path]:
     return data_paths
 
 
+def fetch_all(stock_code: str, data_root: Path) -> list[tuple[str, Path]]:
+    data_paths: list[tuple[str, Path]] = []
+
+    data_paths.append(("gsgk", fetch_gsgk(stock_code, data_root)))
+    data_paths.extend(
+        ("ybpj", data_path) for data_path in fetch_ybpj(stock_code, data_root)
+    )
+    data_paths.extend(
+        ("cwfx", data_path) for data_path in fetch_cwfx(stock_code, data_root)
+    )
+    data_paths.extend(
+        ("hyfx", data_path) for data_path in fetch_hyfx(stock_code, data_root)
+    )
+
+    return data_paths
+
+
+def run_fetch_all(stock_code: str, data_root: Path, output_stream: TextIO) -> Path:
+    valid_stock_code = validate_stock_code(stock_code)
+
+    print("开始下载公司概况 gsgk...", file=output_stream)
+    data_path = fetch_gsgk(valid_stock_code, data_root)
+    print(f"saved gsgk raw JSON: {data_path}", file=output_stream)
+
+    print("开始下载研报评级 ybpj...", file=output_stream)
+    for data_path in fetch_ybpj(valid_stock_code, data_root):
+        print(f"saved ybpj raw JSON: {data_path}", file=output_stream)
+
+    print("开始下载财务分析 cwfx...", file=output_stream)
+    for data_path in fetch_cwfx(valid_stock_code, data_root):
+        print(f"saved cwfx raw JSON: {data_path}", file=output_stream)
+
+    print("开始下载行业分析 hyfx...", file=output_stream)
+    for data_path in fetch_hyfx(valid_stock_code, data_root):
+        print(f"saved hyfx raw JSON: {data_path}", file=output_stream)
+
+    print("开始生成 AI Context...", file=output_stream)
+    output_path = generate_full_context(valid_stock_code, data_root)
+    print(f"saved AI context Markdown: {output_path}", file=output_stream)
+    return output_path
+
+
 def run_ui(
     data_root: Path,
     *,
@@ -250,75 +304,87 @@ def run_ui(
 ) -> int:
     output_stream = output if output is not None else sys.stdout
 
-    print("ZXTP", file=output_stream)
-    print("", file=output_stream)
-    print("请选择操作：", file=output_stream)
-    print("1. 下载数据", file=output_stream)
-    print("2. 生成 AI Context", file=output_stream)
-    print("0. 退出", file=output_stream)
-    action = input_func("> ").strip()
+    while True:
+        try:
+            print("ZXTP", file=output_stream)
+            print("", file=output_stream)
+            print("请选择操作：", file=output_stream)
+            print("1. 下载数据", file=output_stream)
+            print("2. 生成 AI Context", file=output_stream)
+            print("0. 退出", file=output_stream)
+            action = input_func("> ").strip()
 
-    if action == "0":
-        print("已退出", file=output_stream)
-        return 0
-    if action == "2":
-        print("", file=output_stream)
-        print("请输入股票代码：", file=output_stream)
-        stock_code = input_func("> ").strip()
+            if action == "0":
+                print("已退出", file=output_stream)
+                return 0
+            if action == "2":
+                print("", file=output_stream)
+                print("请输入股票代码：", file=output_stream)
+                stock_code = validate_stock_code(input_func("> ").strip())
 
-        print("", file=output_stream)
-        print("开始生成 AI Context...", file=output_stream)
-        output_path = generate_full_context(stock_code, data_root)
-        print(f"saved AI context Markdown: {output_path}", file=output_stream)
-        return 0
-    if action != "1":
-        raise TqlexError("unsupported menu choice")
+                print("", file=output_stream)
+                print("开始生成 AI Context...", file=output_stream)
+                output_path = generate_full_context(stock_code, data_root)
+                print(f"saved AI context Markdown: {output_path}", file=output_stream)
+                return 0
+            if action != "1":
+                raise TqlexError("unsupported menu choice")
 
-    print("", file=output_stream)
-    print("请选择数据模块：", file=output_stream)
-    print("1. 公司概况 gsgk", file=output_stream)
-    print("2. 研报评级 ybpj", file=output_stream)
-    print("3. 财务分析 cwfx", file=output_stream)
-    print("4. 行业分析 hyfx", file=output_stream)
-    print("0. 返回", file=output_stream)
-    module = input_func("> ").strip()
+            print("", file=output_stream)
+            print("请选择数据模块：", file=output_stream)
+            print("1. 公司概况 gsgk", file=output_stream)
+            print("2. 研报评级 ybpj", file=output_stream)
+            print("3. 财务分析 cwfx", file=output_stream)
+            print("4. 行业分析 hyfx", file=output_stream)
+            print("5. 全部下载 all", file=output_stream)
+            print("0. 返回", file=output_stream)
+            module = input_func("> ").strip()
 
-    if module == "0":
-        print("已返回", file=output_stream)
-        return 0
-    if module not in {"1", "2", "3", "4"}:
-        raise TqlexError("unsupported module choice")
+            if module == "0":
+                print("已返回", file=output_stream)
+                return 0
+            if module not in {"1", "2", "3", "4", "5"}:
+                raise TqlexError("unsupported module choice")
 
-    print("", file=output_stream)
-    print("请输入股票代码：", file=output_stream)
-    stock_code = input_func("> ").strip()
+            print("", file=output_stream)
+            print("请输入股票代码：", file=output_stream)
+            stock_code = validate_stock_code(input_func("> ").strip())
 
-    if module == "1":
-        print("", file=output_stream)
-        print("开始下载公司概况 gsgk...", file=output_stream)
-        data_path = fetch_gsgk(stock_code, data_root)
-        print(f"saved gsgk raw JSON: {data_path}", file=output_stream)
-        return 0
+            if module == "1":
+                print("", file=output_stream)
+                print("开始下载公司概况 gsgk...", file=output_stream)
+                data_path = fetch_gsgk(stock_code, data_root)
+                print(f"saved gsgk raw JSON: {data_path}", file=output_stream)
+                return 0
 
-    if module == "2":
-        print("", file=output_stream)
-        print("开始下载研报评级 ybpj...", file=output_stream)
-        for data_path in fetch_ybpj(stock_code, data_root):
-            print(f"saved ybpj raw JSON: {data_path}", file=output_stream)
-        return 0
+            if module == "2":
+                print("", file=output_stream)
+                print("开始下载研报评级 ybpj...", file=output_stream)
+                for data_path in fetch_ybpj(stock_code, data_root):
+                    print(f"saved ybpj raw JSON: {data_path}", file=output_stream)
+                return 0
 
-    if module == "3":
-        print("", file=output_stream)
-        print("开始下载财务分析 cwfx...", file=output_stream)
-        for data_path in fetch_cwfx(stock_code, data_root):
-            print(f"saved cwfx raw JSON: {data_path}", file=output_stream)
-        return 0
+            if module == "3":
+                print("", file=output_stream)
+                print("开始下载财务分析 cwfx...", file=output_stream)
+                for data_path in fetch_cwfx(stock_code, data_root):
+                    print(f"saved cwfx raw JSON: {data_path}", file=output_stream)
+                return 0
 
-    print("", file=output_stream)
-    print("开始下载行业分析 hyfx...", file=output_stream)
-    for data_path in fetch_hyfx(stock_code, data_root):
-        print(f"saved hyfx raw JSON: {data_path}", file=output_stream)
-    return 0
+            if module == "4":
+                print("", file=output_stream)
+                print("开始下载行业分析 hyfx...", file=output_stream)
+                for data_path in fetch_hyfx(stock_code, data_root):
+                    print(f"saved hyfx raw JSON: {data_path}", file=output_stream)
+                return 0
+
+            print("", file=output_stream)
+            print("开始全部下载 all...", file=output_stream)
+            run_fetch_all(stock_code, data_root, output_stream)
+            return 0
+        except TqlexError as exc:
+            print(f"提示: {exc}", file=output_stream)
+            print("", file=output_stream)
 
 
 def main(
@@ -350,6 +416,9 @@ def main(
         if args.command == "fetch-hyfx":
             for data_path in fetch_hyfx(args.stock_code, data_root):
                 print(f"saved hyfx raw JSON: {data_path}", file=output_stream)
+            return 0
+        if args.command == "fetch-all":
+            run_fetch_all(args.stock_code, data_root, output_stream)
             return 0
         if args.command == "export-ai-context":
             output_path = generate_full_context(args.stock_code, data_root)
