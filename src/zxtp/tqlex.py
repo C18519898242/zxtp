@@ -13,6 +13,17 @@ from urllib.request import Request, urlopen
 class TqlexError(RuntimeError):
     """Raised when TQLEX fetching or persistence fails."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        response_body: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.response_body = response_body
+
 
 def validate_stock_code(stock_code: str) -> str:
     if len(stock_code) != 6 or not stock_code.isdigit():
@@ -68,14 +79,25 @@ class TqlexClient:
                 status = getattr(response, "status", 200)
                 raw_bytes = response.read()
         except HTTPError as exc:
-            raise TqlexError(f"TQLEX returned HTTP {exc.code}") from exc
+            response_body = decode_response_body(exc.read())
+            message = http_error_message(exc.code, response_body)
+            raise TqlexError(
+                message,
+                status_code=exc.code,
+                response_body=response_body,
+            ) from exc
         except URLError as exc:
             raise TqlexError(f"TQLEX request failed: {exc.reason}") from exc
         except TimeoutError as exc:
             raise TqlexError("TQLEX request timed out") from exc
 
         if status < 200 or status >= 300:
-            raise TqlexError(f"TQLEX returned HTTP {status}")
+            response_body = decode_response_body(raw_bytes)
+            raise TqlexError(
+                http_error_message(status, response_body),
+                status_code=status,
+                response_body=response_body,
+            )
         if not raw_bytes:
             raise TqlexError("TQLEX response body is empty")
 
@@ -92,6 +114,29 @@ class TqlexClient:
             raise TqlexError(f"TQLEX ErrorCode {error_code}{suffix}")
 
         return TqlexResponse(raw_text=raw_text, json_data=json_data)
+
+
+def decode_response_body(raw_bytes: bytes) -> str:
+    if not raw_bytes:
+        return ""
+    try:
+        return raw_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw_bytes.decode("gb18030", errors="replace")
+
+
+def http_error_message(status_code: int, response_body: str) -> str:
+    message = f"TQLEX returned HTTP {status_code}"
+    body_excerpt = response_body.strip()
+    if body_excerpt:
+        message = f"{message}: {truncate_text(body_excerpt, 500)}"
+    return message
+
+
+def truncate_text(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars] + "...<truncated>"
 
 
 @dataclass(frozen=True)

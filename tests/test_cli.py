@@ -11,7 +11,7 @@ from unittest.mock import Mock, call, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from zxtp.cli import main
-from zxtp.tqlex import TqlexResponse
+from zxtp.tqlex import TqlexError, TqlexResponse
 
 
 class WorkingDirectory:
@@ -296,6 +296,105 @@ class CliFetchCwfxTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 1)
         self.assertIn("stock code must be exactly 6 digits", stderr.getvalue())
+
+    def test_fetch_cwfx_retries_failed_subcategory_and_logs_each_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_client = Mock()
+            fake_client.source_url.side_effect = (
+                lambda entry: f"http://example.test/TQLEX?Entry=CWServ.{entry}"
+            )
+            failures_before_success = 3
+            failing_params = ["002736", "cwzd", ""]
+
+            def fake_call(entry: str, params: list[str]) -> TqlexResponse:
+                nonlocal failures_before_success
+                if entry == "tdxf10_gg_cwfx" and params == failing_params:
+                    if failures_before_success > 0:
+                        failures_before_success -= 1
+                        raise TqlexError(
+                            "TQLEX returned HTTP 400: backend busy",
+                            status_code=400,
+                            response_body='{"reason":"backend busy"}',
+                        )
+                return TqlexResponse(
+                    raw_text='{"ErrorCode":0,"ResultSets":[],"ResultSetNum":0}',
+                    json_data={"ErrorCode": 0, "ResultSets": [], "ResultSetNum": 0},
+                )
+
+            fake_client.call.side_effect = fake_call
+            stdout = io.StringIO()
+
+            with patch("zxtp.cli.TqlexClient", return_value=fake_client):
+                with redirect_stdout(stdout):
+                    exit_code = main(["fetch-cwfx", "002736", "--data-root", tmp])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(
+                fake_client.call.call_args_list.count(
+                    call("tdxf10_gg_cwfx", failing_params)
+                ),
+                4,
+            )
+            self.assertEqual(
+                fake_client.call.call_args_list.count(
+                    call("tdxf10_gg_cwfx", ["002736", "gptype", ""])
+                ),
+                1,
+            )
+            output = stdout.getvalue()
+            self.assertIn("重试: tdxf10_gg_cwfx/cwzd 第 1/4 次失败", output)
+            self.assertIn("重试: tdxf10_gg_cwfx/cwzd 第 2/4 次失败", output)
+            self.assertIn("重试: tdxf10_gg_cwfx/cwzd 第 3/4 次失败", output)
+            self.assertNotIn("重试: tdxf10_gg_cwfx/cwzd 第 4/4 次失败", output)
+            log_path = Path(tmp) / "logs" / "tqlex_failures.jsonl"
+            log_records = [
+                json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(len(log_records), 3)
+            self.assertEqual([record["attempt"] for record in log_records], [1, 2, 3])
+            self.assertTrue(all(record["max_attempts"] == 4 for record in log_records))
+            self.assertTrue(all(record["stock_code"] == "002736" for record in log_records))
+            self.assertTrue(all(record["entry"] == "tdxf10_gg_cwfx" for record in log_records))
+            self.assertTrue(all(record["module"] == "cwzd" for record in log_records))
+            self.assertTrue(all(record["params"] == failing_params for record in log_records))
+            self.assertTrue(all(record["status_code"] == 400 for record in log_records))
+            self.assertTrue(
+                all(record["response_body"] == '{"reason":"backend busy"}' for record in log_records)
+            )
+
+    def test_fetch_cwfx_logs_final_failed_subcategory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_client = Mock()
+            fake_client.source_url.side_effect = (
+                lambda entry: f"http://example.test/TQLEX?Entry=CWServ.{entry}"
+            )
+            fake_client.call.side_effect = TqlexError(
+                "TQLEX returned HTTP 400: bad request",
+                status_code=400,
+                response_body="bad request detail",
+            )
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+
+            with patch("zxtp.cli.TqlexClient", return_value=fake_client):
+                with redirect_stderr(stderr):
+                    exit_code = main(
+                        ["fetch-cwfx", "002736", "--data-root", tmp],
+                        output=stdout,
+                    )
+
+            self.assertEqual(exit_code, 1)
+            self.assertEqual(fake_client.call.call_count, 4)
+            output = stdout.getvalue()
+            self.assertIn("重试: tdxf10_gg_cwfx/gptype 第 4/4 次失败", output)
+            self.assertIn("TQLEX returned HTTP 400", stderr.getvalue())
+            log_path = Path(tmp) / "logs" / "tqlex_failures.jsonl"
+            log_records = [
+                json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(len(log_records), 4)
+            self.assertEqual([record["attempt"] for record in log_records], [1, 2, 3, 4])
+            self.assertTrue(all(record["module"] == "gptype" for record in log_records))
 
 
 class CliFetchHyfxTests(unittest.TestCase):
@@ -880,6 +979,35 @@ class CliUiJyfxTests(unittest.TestCase):
             output = stdout.getvalue()
             self.assertIn("jyfx", output)
             self.assertIn("saved jyfx raw JSON", output)
+
+    def test_ui_explains_known_jyfx_failure_for_600001(self) -> None:
+        fake_client = Mock()
+        fake_client.call.side_effect = TqlexError("TQLEX ErrorCode 1005: 数据库执行失败")
+        inputs = iter(["1", "5", "600001", "0"])
+        stdout = io.StringIO()
+
+        with patch("zxtp.cli.TqlexClient", return_value=fake_client):
+            exit_code = main(
+                ["ui"],
+                input_func=lambda prompt="": next(inputs),
+                output=stdout,
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(fake_client.call.call_count, 4)
+        self.assertTrue(
+            all(
+                call_args == call("tdxf10_gg_jyfx", ["600001", "zyyw", ""])
+                for call_args in fake_client.call.call_args_list
+            )
+        )
+        output = stdout.getvalue()
+        self.assertIn("经营分析 jyfx 下载失败", output)
+        self.assertIn("重试: tdxf10_gg_jyfx/zyyw 第 1/4 次失败", output)
+        self.assertIn("重试: tdxf10_gg_jyfx/zyyw 第 4/4 次失败", output)
+        self.assertIn("002736 是正常的", output)
+        self.assertIn("600001 是失败的", output)
+        self.assertIn("TQLEX ErrorCode 1005", output)
 
 
 class CliUiFhrzTests(unittest.TestCase):

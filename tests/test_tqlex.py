@@ -1,8 +1,10 @@
+import io
 import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from urllib.error import HTTPError
 from unittest.mock import Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -98,6 +100,39 @@ class TqlexClientTests(unittest.TestCase):
 
         with self.assertRaisesRegex(TqlexError, "TQLEX returned HTTP 500"):
             client.call("tdxf10_gg_gsgk", ["0", "002736", ""])
+
+    def test_http_error_includes_response_body_for_debugging(self) -> None:
+        error = HTTPError(
+            "http://example.test/TQLEX",
+            400,
+            "Bad Request",
+            {},
+            io.BytesIO(b'{"reason":"invalid module"}'),
+        )
+        opener = Mock(side_effect=error)
+        client = TqlexClient(base_url="http://example.test", opener=opener)
+
+        with self.assertRaisesRegex(TqlexError, "invalid module") as captured:
+            client.call("tdxf10_gg_gsgk", ["0", "002736", ""])
+
+        self.assertEqual(captured.exception.status_code, 400)
+        self.assertEqual(captured.exception.response_body, '{"reason":"invalid module"}')
+
+    def test_http_error_decodes_gb18030_response_body(self) -> None:
+        error = HTTPError(
+            "http://example.test/TQLEX",
+            400,
+            "Bad Request",
+            {},
+            io.BytesIO("数据库执行失败".encode("gb18030")),
+        )
+        opener = Mock(side_effect=error)
+        client = TqlexClient(base_url="http://example.test", opener=opener)
+
+        with self.assertRaisesRegex(TqlexError, "数据库执行失败") as captured:
+            client.call("tdxf10_gg_gsgk", ["0", "002736", ""])
+
+        self.assertEqual(captured.exception.response_body, "数据库执行失败")
 
     def test_rejects_invalid_json(self) -> None:
         opener = Mock(return_value=FakeHttpResponse(b"not json"))

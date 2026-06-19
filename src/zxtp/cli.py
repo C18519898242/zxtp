@@ -1,13 +1,21 @@
 ﻿from __future__ import annotations
 
 import argparse
+import json
 import sys
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Sequence, TextIO
+from typing import Any, Callable, Iterator, Sequence, TextIO
 
 from .ai_context import generate_full_context
 from .config import resolve_data_root
-from .tqlex import RawCacheWriter, TqlexClient, TqlexError, validate_stock_code
+from .tqlex import (
+    RawCacheWriter,
+    TqlexClient,
+    TqlexError,
+    now_shanghai_iso,
+    validate_stock_code,
+)
 
 
 GSGK_ENTRY = "tdxf10_gg_gsgk"
@@ -88,6 +96,9 @@ GDYJ_JGCGMX_MODULE = "jgcgmx"
 GDYJ_ALL_INSTITUTION_TYPE = "99"
 GDYJ_JGCGMX_DEFAULT_SORT = "000"
 GDYJ_JGCGMX_PAGE_PARAMS = ("1", "1", "30")
+TQLEX_MAX_ATTEMPTS = 4
+TQLEX_FAILURE_LOG_BODY_MAX_CHARS = 4000
+_retry_output_stream: TextIO | None = None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -245,7 +256,14 @@ def fetch_tqlex_raw_json(
     data_root: Path,
     client: TqlexClient,
 ) -> tuple[Path, dict[str, Any]]:
-    response = client.call(entry, params)
+    response = call_tqlex_with_retries(
+        entry=entry,
+        params=params,
+        stock_code=stock_code,
+        module=module,
+        data_root=data_root,
+        client=client,
+    )
 
     writer = RawCacheWriter(data_root)
     paths = writer.write(
@@ -257,6 +275,112 @@ def fetch_tqlex_raw_json(
         json_data=response.json_data,
     )
     return paths.data_path, response.json_data
+
+
+def call_tqlex_with_retries(
+    *,
+    entry: str,
+    params: list[str],
+    stock_code: str,
+    module: str,
+    data_root: Path,
+    client: TqlexClient,
+) -> Any:
+    for attempt in range(1, TQLEX_MAX_ATTEMPTS + 1):
+        try:
+            return client.call(entry, params)
+        except TqlexError as exc:
+            write_tqlex_failure_log(
+                data_root=data_root,
+                entry=entry,
+                params=params,
+                stock_code=stock_code,
+                module=module,
+                attempt=attempt,
+                max_attempts=TQLEX_MAX_ATTEMPTS,
+                error=exc,
+            )
+            print_tqlex_retry_attempt(
+                entry=entry,
+                module=module,
+                attempt=attempt,
+                max_attempts=TQLEX_MAX_ATTEMPTS,
+                error=exc,
+            )
+            if attempt == TQLEX_MAX_ATTEMPTS:
+                raise
+    raise TqlexError("TQLEX retry loop ended unexpectedly")
+
+
+@contextmanager
+def tqlex_retry_output(output_stream: TextIO | None) -> Iterator[None]:
+    global _retry_output_stream
+    previous_output_stream = _retry_output_stream
+    _retry_output_stream = output_stream
+    try:
+        yield
+    finally:
+        _retry_output_stream = previous_output_stream
+
+
+def print_tqlex_retry_attempt(
+    *,
+    entry: str,
+    module: str,
+    attempt: int,
+    max_attempts: int,
+    error: TqlexError,
+) -> None:
+    if _retry_output_stream is None:
+        return
+    if attempt < max_attempts:
+        action = "继续重试"
+    else:
+        action = "已停止重试"
+    print(
+        f"重试: {entry}/{module} 第 {attempt}/{max_attempts} 次失败，"
+        f"{action}；错误: {truncate_log_text(str(error))}",
+        file=_retry_output_stream,
+    )
+
+
+def write_tqlex_failure_log(
+    *,
+    data_root: Path,
+    entry: str,
+    params: list[str],
+    stock_code: str,
+    module: str,
+    attempt: int,
+    max_attempts: int,
+    error: TqlexError,
+) -> None:
+    log_path = data_root / "logs" / "tqlex_failures.jsonl"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    response_body = error.response_body
+    record = {
+        "logged_at": now_shanghai_iso(),
+        "source": "tqlex",
+        "entry": entry,
+        "params": params,
+        "stock_code": stock_code,
+        "module": module,
+        "attempt": attempt,
+        "max_attempts": max_attempts,
+        "status_code": error.status_code,
+        "error": str(error),
+        "response_body": truncate_log_text(response_body)
+        if response_body is not None
+        else None,
+    }
+    with log_path.open("a", encoding="utf-8") as log_file:
+        log_file.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def truncate_log_text(text: str) -> str:
+    if len(text) <= TQLEX_FAILURE_LOG_BODY_MAX_CHARS:
+        return text
+    return text[:TQLEX_FAILURE_LOG_BODY_MAX_CHARS] + "...<truncated>"
 
 
 def fetch_gsgk(stock_code: str, data_root: Path) -> Path:
@@ -356,6 +480,23 @@ def fetch_hyfx(stock_code: str, data_root: Path) -> list[Path]:
 
 def fetch_jyfx(stock_code: str, data_root: Path) -> list[Path]:
     valid_stock_code = validate_stock_code(stock_code)
+    try:
+        return _fetch_jyfx(valid_stock_code, data_root)
+    except TqlexError as exc:
+        raise TqlexError(jyfx_failure_message(valid_stock_code, exc)) from exc
+
+
+def jyfx_failure_message(stock_code: str, exc: TqlexError) -> str:
+    if stock_code == "600001":
+        return (
+            "经营分析 jyfx 下载失败（股票代码 600001）："
+            "002736 是正常的，但 600001 是失败的。"
+            f"原始错误：{exc}"
+        )
+    return f"经营分析 jyfx 下载失败（股票代码 {stock_code}）：{exc}"
+
+
+def _fetch_jyfx(valid_stock_code: str, data_root: Path) -> list[Path]:
     client = TqlexClient()
     data_paths = []
 
@@ -755,52 +896,53 @@ def main(
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    try:
-        data_root = resolve_data_root(getattr(args, "data_root", None))
-        if args.command == "fetch-gsgk":
-            data_path = fetch_gsgk(args.stock_code, data_root)
-            print(f"saved gsgk raw JSON: {data_path}", file=output_stream)
-            return 0
-        if args.command == "fetch-ybpj":
-            for data_path in fetch_ybpj(args.stock_code, data_root):
-                print(f"saved ybpj raw JSON: {data_path}", file=output_stream)
-            return 0
-        if args.command == "fetch-cwfx":
-            for data_path in fetch_cwfx(args.stock_code, data_root):
-                print(f"saved cwfx raw JSON: {data_path}", file=output_stream)
-            return 0
-        if args.command == "fetch-hyfx":
-            for data_path in fetch_hyfx(args.stock_code, data_root):
-                print(f"saved hyfx raw JSON: {data_path}", file=output_stream)
-            return 0
-        if args.command == "fetch-jyfx":
-            for data_path in fetch_jyfx(args.stock_code, data_root):
-                print(f"saved jyfx raw JSON: {data_path}", file=output_stream)
-            return 0
-        if args.command == "fetch-fhrz":
-            for data_path in fetch_fhrz(args.stock_code, data_root):
-                print(f"saved fhrz raw JSON: {data_path}", file=output_stream)
-            return 0
-        if args.command == "fetch-gdyj":
-            for data_path in fetch_gdyj(args.stock_code, data_root):
-                print(f"saved gdyj raw JSON: {data_path}", file=output_stream)
-            return 0
-        if args.command == "fetch-all":
-            run_fetch_all(args.stock_code, data_root, output_stream)
-            return 0
-        if args.command == "export-ai-context":
-            output_path = generate_full_context(args.stock_code, data_root)
-            print(f"saved AI context Markdown: {output_path}", file=output_stream)
-            return 0
-        if args.command == "ui":
-            run_ui(data_root, input_func=input_func, output=output_stream)
-            return 0
-    except TqlexError as exc:
-        print(f"error: {exc}", file=error_stream)
-        return 1
+    with tqlex_retry_output(output_stream):
+        try:
+            data_root = resolve_data_root(getattr(args, "data_root", None))
+            if args.command == "fetch-gsgk":
+                data_path = fetch_gsgk(args.stock_code, data_root)
+                print(f"saved gsgk raw JSON: {data_path}", file=output_stream)
+                return 0
+            if args.command == "fetch-ybpj":
+                for data_path in fetch_ybpj(args.stock_code, data_root):
+                    print(f"saved ybpj raw JSON: {data_path}", file=output_stream)
+                return 0
+            if args.command == "fetch-cwfx":
+                for data_path in fetch_cwfx(args.stock_code, data_root):
+                    print(f"saved cwfx raw JSON: {data_path}", file=output_stream)
+                return 0
+            if args.command == "fetch-hyfx":
+                for data_path in fetch_hyfx(args.stock_code, data_root):
+                    print(f"saved hyfx raw JSON: {data_path}", file=output_stream)
+                return 0
+            if args.command == "fetch-jyfx":
+                for data_path in fetch_jyfx(args.stock_code, data_root):
+                    print(f"saved jyfx raw JSON: {data_path}", file=output_stream)
+                return 0
+            if args.command == "fetch-fhrz":
+                for data_path in fetch_fhrz(args.stock_code, data_root):
+                    print(f"saved fhrz raw JSON: {data_path}", file=output_stream)
+                return 0
+            if args.command == "fetch-gdyj":
+                for data_path in fetch_gdyj(args.stock_code, data_root):
+                    print(f"saved gdyj raw JSON: {data_path}", file=output_stream)
+                return 0
+            if args.command == "fetch-all":
+                run_fetch_all(args.stock_code, data_root, output_stream)
+                return 0
+            if args.command == "export-ai-context":
+                output_path = generate_full_context(args.stock_code, data_root)
+                print(f"saved AI context Markdown: {output_path}", file=output_stream)
+                return 0
+            if args.command == "ui":
+                run_ui(data_root, input_func=input_func, output=output_stream)
+                return 0
+        except TqlexError as exc:
+            print(f"error: {exc}", file=error_stream)
+            return 1
 
-    parser.error(f"unsupported command: {args.command}")
-    return 2
+        parser.error(f"unsupported command: {args.command}")
+        return 2
 
 
 if __name__ == "__main__":
