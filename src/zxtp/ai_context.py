@@ -55,6 +55,19 @@ FINANCIAL_ANALYSIS_SOURCES = (
     RawSource("财报点评", "tdxf10_gg_cwfx_cbdp", "cbdp"),
 )
 
+BUSINESS_ANALYSIS_SOURCES = (
+    RawSource("主营介绍", "tdxf10_gg_jyfx", "zyyw"),
+    RawSource("经营数据分析", "tdxf10_gg_jyfx_jysj", "jysj"),
+    RawSource("主营构成日期", "tdxf10_gg_comreq", "zygcfx"),
+    RawSource("主营构成分析", "tdxf10_gg_jyfx", "zygc"),
+    RawSource("前五大客户日期", "tdxf10_gg_comreq", "qwm"),
+    RawSource("前五大客户", "tdxf10_gg_jyfx", "qwm"),
+    RawSource("前五大供应商日期", "tdxf10_gg_comreq", "qwmgys"),
+    RawSource("前五大供应商", "tdxf10_gg_jyfx", "qwmgys"),
+    RawSource("经营情况评述日期", "tdxf10_gg_comreq", "jyqk"),
+    RawSource("经营情况评述", "tdxf10_gg_jyfx", "jyqk"),
+)
+
 RESEARCH_RATING_SOURCES = (
     RawSource("投资评级统计", "tdxf10_gg_ybpj", "tzpjtj"),
     RawSource("业绩预期", "tdxf10_gg_ybpj", "yzyq"),
@@ -86,6 +99,9 @@ def generate_full_context(stock_code: str, data_root: Path) -> Path:
     financial_statuses = source_statuses(
         data_root, valid_stock_code, FINANCIAL_ANALYSIS_SOURCES
     )
+    business_statuses = source_statuses(
+        data_root, valid_stock_code, BUSINESS_ANALYSIS_SOURCES
+    )
     research_statuses = source_statuses(
         data_root, valid_stock_code, RESEARCH_RATING_SOURCES
     )
@@ -93,7 +109,11 @@ def generate_full_context(stock_code: str, data_root: Path) -> Path:
         data_root, valid_stock_code, INDUSTRY_ANALYSIS_SOURCES
     )
     all_statuses = (
-        company_statuses + financial_statuses + research_statuses + industry_statuses
+        company_statuses
+        + financial_statuses
+        + business_statuses
+        + research_statuses
+        + industry_statuses
     )
 
     template = load_template()
@@ -105,6 +125,7 @@ def generate_full_context(stock_code: str, data_root: Path) -> Path:
             "coverage_summary": coverage_summary(all_statuses),
             "company_overview_sources": render_sources(company_statuses),
             "financial_analysis_sources": render_sources(financial_statuses),
+            "business_analysis_sources": render_sources(business_statuses),
             "research_rating_sources": render_sources(research_statuses),
             "industry_analysis_sources": render_sources(industry_statuses),
             "all_sources": render_sources(all_statuses),

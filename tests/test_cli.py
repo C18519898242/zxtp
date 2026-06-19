@@ -360,6 +360,88 @@ class CliFetchHyfxTests(unittest.TestCase):
         self.assertIn("stock code must be exactly 6 digits", stderr.getvalue())
 
 
+class CliFetchJyfxTests(unittest.TestCase):
+    def test_fetch_jyfx_writes_core_raw_cache_and_returns_zero(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_client = Mock()
+            fake_client.source_url.side_effect = (
+                lambda entry: f"http://example.test/TQLEX?Entry=CWServ.{entry}"
+            )
+
+            def fake_call(entry: str, params: list[str]) -> TqlexResponse:
+                json_data = {"ErrorCode": 0, "ResultSets": [], "ResultSetNum": 0}
+                if entry == "tdxf10_gg_comreq":
+                    json_data = {
+                        "ErrorCode": 0,
+                        "ResultSets": [
+                            {
+                                "ColDes": [{"Name": "T002"}],
+                                "Content": [["20241231"]],
+                            }
+                        ],
+                        "ResultSetNum": 1,
+                    }
+                return TqlexResponse(raw_text=json.dumps(json_data), json_data=json_data)
+
+            fake_client.call.side_effect = fake_call
+            stdout = io.StringIO()
+
+            with patch("zxtp.cli.TqlexClient", return_value=fake_client):
+                with redirect_stdout(stdout):
+                    exit_code = main(["fetch-jyfx", "002736", "--data-root", tmp])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(
+                fake_client.call.call_args_list,
+                [
+                    call("tdxf10_gg_jyfx", ["002736", "zyyw", ""]),
+                    call("tdxf10_gg_jyfx_jysj", ["002736"]),
+                    call("tdxf10_gg_comreq", ["zygcfx", "002736"]),
+                    call("tdxf10_gg_jyfx", ["002736", "zygc", "20241231"]),
+                    call("tdxf10_gg_comreq", ["qwm", "002736"]),
+                    call("tdxf10_gg_jyfx", ["002736", "qwm", "20241231"]),
+                    call("tdxf10_gg_comreq", ["qwmgys", "002736"]),
+                    call("tdxf10_gg_jyfx", ["002736", "qwmgys", "20241231"]),
+                    call("tdxf10_gg_comreq", ["jyqk", "002736"]),
+                    call("tdxf10_gg_jyfx", ["002736", "0", "20241231"]),
+                ],
+            )
+            output = stdout.getvalue()
+            self.assertIn("saved jyfx raw JSON", output)
+            expected_paths = [
+                ("tdxf10_gg_jyfx", "zyyw"),
+                ("tdxf10_gg_jyfx_jysj", "jysj"),
+                ("tdxf10_gg_comreq", "zygcfx"),
+                ("tdxf10_gg_jyfx", "zygc"),
+                ("tdxf10_gg_comreq", "qwm"),
+                ("tdxf10_gg_jyfx", "qwm"),
+                ("tdxf10_gg_comreq", "qwmgys"),
+                ("tdxf10_gg_jyfx", "qwmgys"),
+                ("tdxf10_gg_comreq", "jyqk"),
+                ("tdxf10_gg_jyfx", "jyqk"),
+            ]
+            for entry, module in expected_paths:
+                data_path = (
+                    Path(tmp)
+                    / "raw"
+                    / "tqlex"
+                    / entry
+                    / "stock=002736"
+                    / f"module={module}"
+                    / "latest.json"
+                )
+                self.assertTrue(data_path.exists())
+
+    def test_fetch_jyfx_rejects_invalid_stock_code(self) -> None:
+        stderr = io.StringIO()
+
+        with redirect_stderr(stderr):
+            exit_code = main(["fetch-jyfx", "BAD"])
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("stock code must be exactly 6 digits", stderr.getvalue())
+
+
 class CliFetchAllTests(unittest.TestCase):
     def test_fetch_all_writes_every_raw_cache_and_returns_zero(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -384,7 +466,9 @@ class CliFetchAllTests(unittest.TestCase):
             fake_client.call.assert_any_call("tdxf10_gg_comreq", ["bdsm", "002736"])
             fake_client.call.assert_any_call("tdxf10_gg_cwfx_cbdp", ["002736", "1"])
             fake_client.call.assert_any_call("tdxf10_gg_hyfx", ["tot", "002736", ""])
-            self.assertEqual(fake_client.call.call_count, 36)
+            fake_client.call.assert_any_call("tdxf10_gg_jyfx", ["002736", "zyyw", ""])
+            fake_client.call.assert_any_call("tdxf10_gg_jyfx_jysj", ["002736"])
+            self.assertEqual(fake_client.call.call_count, 46)
 
             output = stdout.getvalue()
             self.assertIn("开始下载公司概况 gsgk", output)
@@ -405,6 +489,8 @@ class CliFetchAllTests(unittest.TestCase):
                 ("tdxf10_gg_comreq", "bdsm"),
                 ("tdxf10_gg_cwfx_cbdp", "cbdp"),
                 ("tdxf10_gg_hyfx", "tot"),
+                ("tdxf10_gg_jyfx", "zyyw"),
+                ("tdxf10_gg_jyfx_jysj", "jysj"),
             ]
             for entry, module in expected_paths:
                 data_path = (
@@ -556,8 +642,8 @@ class CliUiHyfxTests(unittest.TestCase):
             self.assertIn("saved hyfx raw JSON", output)
 
 
-class CliUiFetchAllTests(unittest.TestCase):
-    def test_ui_fetches_all_from_menu_choices(self) -> None:
+class CliUiJyfxTests(unittest.TestCase):
+    def test_ui_fetches_jyfx_from_menu_choices(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             fake_client = Mock()
             fake_client.source_url.side_effect = (
@@ -578,11 +664,41 @@ class CliUiFetchAllTests(unittest.TestCase):
                 )
 
             self.assertEqual(exit_code, 0)
+            fake_client.call.assert_any_call("tdxf10_gg_jyfx", ["002736", "zyyw", ""])
+            fake_client.call.assert_any_call("tdxf10_gg_jyfx_jysj", ["002736"])
+            output = stdout.getvalue()
+            self.assertIn("jyfx", output)
+            self.assertIn("saved jyfx raw JSON", output)
+
+
+class CliUiFetchAllTests(unittest.TestCase):
+    def test_ui_fetches_all_from_menu_choices(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_client = Mock()
+            fake_client.source_url.side_effect = (
+                lambda entry: f"http://example.test/TQLEX?Entry=CWServ.{entry}"
+            )
+            fake_client.call.return_value = TqlexResponse(
+                raw_text='{"ErrorCode":0,"ResultSets":[],"ResultSetNum":0}',
+                json_data={"ErrorCode": 0, "ResultSets": [], "ResultSetNum": 0},
+            )
+            inputs = iter(["1", "6", "002736"])
+            stdout = io.StringIO()
+
+            with patch("zxtp.cli.TqlexClient", return_value=fake_client):
+                exit_code = main(
+                    ["ui", "--data-root", tmp],
+                    input_func=lambda prompt="": next(inputs),
+                    output=stdout,
+                )
+
+            self.assertEqual(exit_code, 0)
             fake_client.call.assert_any_call("tdxf10_gg_gsgk", ["0", "002736", ""])
             fake_client.call.assert_any_call("tdxf10_gg_ybpj", ["002736", "tzpjtj"])
             fake_client.call.assert_any_call("tdxf10_gg_cwfx", ["002736", "gptype", ""])
             fake_client.call.assert_any_call("tdxf10_gg_hyfx", ["tot", "002736", ""])
-            self.assertEqual(fake_client.call.call_count, 36)
+            fake_client.call.assert_any_call("tdxf10_gg_jyfx", ["002736", "zyyw", ""])
+            self.assertEqual(fake_client.call.call_count, 46)
             output = stdout.getvalue()
             self.assertIn("all", output)
             self.assertIn("开始下载公司概况 gsgk", output)
@@ -600,7 +716,7 @@ class CliUiFetchAllTests(unittest.TestCase):
 class CliUiInputErrorTests(unittest.TestCase):
     def test_ui_shows_hint_and_returns_to_menu_when_stock_code_is_invalid(self) -> None:
         fake_client = Mock()
-        inputs = iter(["1", "5", "6000011", "0"])
+        inputs = iter(["1", "6", "6000011", "0"])
         stdout = io.StringIO()
 
         with patch("zxtp.cli.TqlexClient", return_value=fake_client):
