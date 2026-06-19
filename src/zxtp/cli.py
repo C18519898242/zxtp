@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from typing import Callable, Sequence, TextIO
 
+from .ai_context import generate_full_context
 from .tqlex import RawCacheWriter, TqlexClient, TqlexError, validate_stock_code
 
 
@@ -76,6 +77,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fetch_cwfx.add_argument("stock_code")
     fetch_cwfx.add_argument(
+        "--data-root",
+        type=Path,
+        default=Path("data"),
+        help="Data root directory. Defaults to ./data.",
+    )
+
+    export_ai_context = subparsers.add_parser(
+        "export-ai-context",
+        help="Generate stock-first AI context Markdown from local raw cache.",
+    )
+    export_ai_context.add_argument("stock_code")
+    export_ai_context.add_argument(
         "--data-root",
         type=Path,
         default=Path("data"),
@@ -206,11 +219,22 @@ def run_ui(
     print("", file=output_stream)
     print("请选择操作：", file=output_stream)
     print("1. 下载数据", file=output_stream)
+    print("2. 生成 AI Context", file=output_stream)
     print("0. 退出", file=output_stream)
     action = input_func("> ").strip()
 
     if action == "0":
         print("已退出", file=output_stream)
+        return 0
+    if action == "2":
+        print("", file=output_stream)
+        print("请输入股票代码：", file=output_stream)
+        stock_code = input_func("> ").strip()
+
+        print("", file=output_stream)
+        print("开始生成 AI Context...", file=output_stream)
+        output_path = generate_full_context(stock_code, data_root)
+        print(f"saved AI context Markdown: {output_path}", file=output_stream)
         return 0
     if action != "1":
         raise TqlexError("unsupported menu choice")
@@ -278,6 +302,10 @@ def main(
         if args.command == "fetch-cwfx":
             for data_path in fetch_cwfx(args.stock_code, args.data_root):
                 print(f"saved cwfx raw JSON: {data_path}", file=output_stream)
+            return 0
+        if args.command == "export-ai-context":
+            output_path = generate_full_context(args.stock_code, args.data_root)
+            print(f"saved AI context Markdown: {output_path}", file=output_stream)
             return 0
         if args.command == "ui":
             run_ui(args.data_root, input_func=input_func, output=output_stream)

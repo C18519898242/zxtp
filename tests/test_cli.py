@@ -212,6 +212,40 @@ class CliFetchCwfxTests(unittest.TestCase):
         self.assertIn("stock code must be exactly 6 digits", stderr.getvalue())
 
 
+class CliExportAiContextTests(unittest.TestCase):
+    def test_export_ai_context_writes_full_context_markdown(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            stdout = io.StringIO()
+
+            with redirect_stdout(stdout):
+                exit_code = main(["export-ai-context", "002736", "--data-root", tmp])
+
+            self.assertEqual(exit_code, 0)
+            output = stdout.getvalue()
+            self.assertIn("saved AI context Markdown", output)
+            output_path = (
+                Path(tmp)
+                / "exports"
+                / "ai_context"
+                / "002736"
+                / "full_context.md"
+            )
+            self.assertTrue(output_path.exists())
+            self.assertIn(
+                "# 002736 研究上下文",
+                output_path.read_text(encoding="utf-8"),
+            )
+
+    def test_export_ai_context_rejects_invalid_stock_code(self) -> None:
+        stderr = io.StringIO()
+
+        with redirect_stderr(stderr):
+            exit_code = main(["export-ai-context", "BAD"])
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("stock code must be exactly 6 digits", stderr.getvalue())
+
+
 class CliUiYbpjTests(unittest.TestCase):
     def test_ui_fetches_ybpj_from_menu_choices(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -267,6 +301,32 @@ class CliUiCwfxTests(unittest.TestCase):
             output = stdout.getvalue()
             self.assertIn("cwfx", output)
             self.assertIn("saved cwfx raw JSON", output)
+
+
+class CliUiAiContextTests(unittest.TestCase):
+    def test_ui_exports_ai_context_from_menu_choices(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            inputs = iter(["2", "002736"])
+            stdout = io.StringIO()
+
+            exit_code = main(
+                ["ui", "--data-root", tmp],
+                input_func=lambda prompt="": next(inputs),
+                output=stdout,
+            )
+
+            self.assertEqual(exit_code, 0)
+            output_path = (
+                Path(tmp)
+                / "exports"
+                / "ai_context"
+                / "002736"
+                / "full_context.md"
+            )
+            self.assertTrue(output_path.exists())
+            output = stdout.getvalue()
+            self.assertIn("AI Context", output)
+            self.assertIn("saved AI context Markdown", output)
 
 
 class CliUiTests(unittest.TestCase):

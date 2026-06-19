@@ -206,11 +206,34 @@ data/
 
   exports/
     ai_context/
-      002648.md
-      002648.json
+      002648/
+        full_context.md
 ```
 
 第一版以 `latest.json` 为主，表示该接口和参数组合的最新原始响应。`history/` 是可选能力，用于调试 parser、追溯接口字段变化或保留重要时间点快照；日常查询和 AI 上下文默认不读取历史 raw 文件。
+
+### AI Context Markdown
+
+`data/exports/ai_context/<stock_code>/full_context.md` 是面向人类和 AI 阅读的 stock-first 入口文件。它不替代 raw JSON，也不改变 raw 目录的 source-first 组织方式；raw 层仍负责保存原始证据，AI Context 层负责把某一只股票已经缓存的公司概况、财务分析、研报评级等数据组织到固定 Markdown 章节里。
+
+第一版 `full_context.md` 由模板生成，模板位于：
+
+```text
+src/zxtp/templates/ai_context/full_context.md.tpl
+```
+
+所有股票都使用相同章节顺序：
+
+```text
+1. 基本信息
+2. 公司概况
+3. 财务分析
+4. 研报评级
+5. 风险与待验证问题
+6. 数据来源
+```
+
+即使某个模块暂时没有 raw 数据，也保留章节并标记为缺失。这样 AI 每次读取不同股票时都能看到稳定格式，不需要猜测章节名称、顺序或数据来源。后续 parser 完成后，生成器会继续使用同一个模板，把“暂无结构化摘要”替换为解析后的指标、表格和文字摘要。
 
 ## 初始数据表设计
 
@@ -349,6 +372,7 @@ zxtp query --sort pe_ttm --limit 50
 zxtp query --where "roe > 10 and pe_ttm < 20"
 zxtp brief 002648
 zxtp ai-context 002648
+zxtp export-ai-context 002648
 ```
 
 其中：
@@ -357,7 +381,19 @@ zxtp ai-context 002648
 - `refresh-watchlist` 批量刷新自选股。
 - `query` 查询 DuckDB 中的结构化数据。
 - `brief` 输出公司简报。
-- `ai-context` 生成 AI 可读的 Markdown / JSON 上下文。
+- `ai-context` / `export-ai-context` 生成 AI 可读的 Markdown 上下文。
+
+当前已实现的 AI Context 命令：
+
+```powershell
+python -m zxtp export-ai-context 002648
+```
+
+该命令读取本地 raw cache，生成：
+
+```text
+data/exports/ai_context/002648/full_context.md
+```
 
 ## AI 使用方式
 

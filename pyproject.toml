@@ -11,6 +11,9 @@ zxtp = "zxtp.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+zxtp = ["templates/**/*.tpl"]
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
