@@ -54,6 +54,22 @@ JYFX_DATE_DETAIL_MODULES = (
     ("qwmgys", "qwmgys", "qwmgys"),
     ("jyqk", "jyqk", "0"),
 )
+FHRZ_ENTRY = "tdxf10_gg_fhrz"
+FHRZ_MODULES = (
+    "pxmz",
+    "fh",
+    "fh_zzt",
+    "fhlszs_glzfl",
+    "fhlszs_gxl",
+    "fhpm_glzfl",
+    "fhpm_gxl",
+    "fhpm_pxrzb",
+    "pf",
+)
+FHRZ_ZFHPMX_ENTRY = "tdxf10_gg_fhrz_zfhpmx"
+FHRZ_ZFPG_DATE_MODULE = "zfpg_bgq"
+FHRZ_ZFPG_MODULE = "zfpg"
+FHRZ_TRAILING_MODULES = ("zf", "gqjl", "kzzdfxyss")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -114,6 +130,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fetch_jyfx.add_argument("stock_code")
     fetch_jyfx.add_argument(
+        "--data-root",
+        type=Path,
+        default=None,
+        help="Data root directory. Overrides config.toml [data].root.",
+    )
+
+    fetch_fhrz = subparsers.add_parser(
+        "fetch-fhrz",
+        help="Fetch TQLEX dividend and financing raw JSON for one stock.",
+    )
+    fetch_fhrz.add_argument("stock_code")
+    fetch_fhrz.add_argument(
         "--data-root",
         type=Path,
         default=None,
@@ -347,6 +375,59 @@ def fetch_jyfx(stock_code: str, data_root: Path) -> list[Path]:
     return data_paths
 
 
+def fetch_fhrz(stock_code: str, data_root: Path) -> list[Path]:
+    valid_stock_code = validate_stock_code(stock_code)
+    client = TqlexClient()
+    data_paths = []
+
+    for module in FHRZ_MODULES:
+        data_paths.append(
+            fetch_tqlex_raw(
+                entry=FHRZ_ENTRY,
+                params=[valid_stock_code, module],
+                stock_code=valid_stock_code,
+                module=module,
+                data_root=data_root,
+                client=client,
+            )
+        )
+
+    date_path, date_json = fetch_tqlex_raw_json(
+        entry=FHRZ_ZFHPMX_ENTRY,
+        params=[FHRZ_ZFPG_DATE_MODULE, valid_stock_code, ""],
+        stock_code=valid_stock_code,
+        module=FHRZ_ZFPG_DATE_MODULE,
+        data_root=data_root,
+        client=client,
+    )
+    data_paths.append(date_path)
+    report_date = first_result_value(date_json, ("rq", "T002", "N001", "date"))
+    data_paths.append(
+        fetch_tqlex_raw(
+            entry=FHRZ_ZFHPMX_ENTRY,
+            params=[FHRZ_ZFPG_MODULE, valid_stock_code, report_date],
+            stock_code=valid_stock_code,
+            module=FHRZ_ZFPG_MODULE,
+            data_root=data_root,
+            client=client,
+        )
+    )
+
+    for module in FHRZ_TRAILING_MODULES:
+        data_paths.append(
+            fetch_tqlex_raw(
+                entry=FHRZ_ENTRY,
+                params=[valid_stock_code, module],
+                stock_code=valid_stock_code,
+                module=module,
+                data_root=data_root,
+                client=client,
+            )
+        )
+
+    return data_paths
+
+
 def first_result_value(json_data: dict[str, Any], keys: tuple[str, ...]) -> str:
     result_sets = json_data.get("ResultSets", [])
     if not isinstance(result_sets, list):
@@ -403,6 +484,9 @@ def fetch_all(stock_code: str, data_root: Path) -> list[tuple[str, Path]]:
         ("jyfx", data_path) for data_path in fetch_jyfx(stock_code, data_root)
     )
     data_paths.extend(
+        ("fhrz", data_path) for data_path in fetch_fhrz(stock_code, data_root)
+    )
+    data_paths.extend(
         ("hyfx", data_path) for data_path in fetch_hyfx(stock_code, data_root)
     )
 
@@ -427,6 +511,10 @@ def run_fetch_all(stock_code: str, data_root: Path, output_stream: TextIO) -> Pa
     print("开始下载经营分析 jyfx...", file=output_stream)
     for data_path in fetch_jyfx(valid_stock_code, data_root):
         print(f"saved jyfx raw JSON: {data_path}", file=output_stream)
+
+    print("开始下载分红融资 fhrz...", file=output_stream)
+    for data_path in fetch_fhrz(valid_stock_code, data_root):
+        print(f"saved fhrz raw JSON: {data_path}", file=output_stream)
 
     print("开始下载行业分析 hyfx...", file=output_stream)
     for data_path in fetch_hyfx(valid_stock_code, data_root):
@@ -479,14 +567,15 @@ def run_ui(
             print("3. 财务分析 cwfx", file=output_stream)
             print("4. 行业分析 hyfx", file=output_stream)
             print("5. 经营分析 jyfx", file=output_stream)
-            print("6. 全部下载 all", file=output_stream)
+            print("6. 分红融资 fhrz", file=output_stream)
+            print("7. 全部下载 all", file=output_stream)
             print("0. 返回", file=output_stream)
             module = input_func("> ").strip()
 
             if module == "0":
                 print("已返回", file=output_stream)
                 return 0
-            if module not in {"1", "2", "3", "4", "5", "6"}:
+            if module not in {"1", "2", "3", "4", "5", "6", "7"}:
                 raise TqlexError("unsupported module choice")
 
             print("", file=output_stream)
@@ -526,6 +615,13 @@ def run_ui(
                 print("开始下载经营分析 jyfx...", file=output_stream)
                 for data_path in fetch_jyfx(stock_code, data_root):
                     print(f"saved jyfx raw JSON: {data_path}", file=output_stream)
+                return 0
+
+            if module == "6":
+                print("", file=output_stream)
+                print("开始下载分红融资 fhrz...", file=output_stream)
+                for data_path in fetch_fhrz(stock_code, data_root):
+                    print(f"saved fhrz raw JSON: {data_path}", file=output_stream)
                 return 0
 
             print("", file=output_stream)
@@ -570,6 +666,10 @@ def main(
         if args.command == "fetch-jyfx":
             for data_path in fetch_jyfx(args.stock_code, data_root):
                 print(f"saved jyfx raw JSON: {data_path}", file=output_stream)
+            return 0
+        if args.command == "fetch-fhrz":
+            for data_path in fetch_fhrz(args.stock_code, data_root):
+                print(f"saved fhrz raw JSON: {data_path}", file=output_stream)
             return 0
         if args.command == "fetch-all":
             run_fetch_all(args.stock_code, data_root, output_stream)

@@ -68,6 +68,23 @@ BUSINESS_ANALYSIS_SOURCES = (
     RawSource("经营情况评述", "tdxf10_gg_jyfx", "jyqk"),
 )
 
+DIVIDEND_FINANCING_SOURCES = (
+    RawSource("分红募资概览", "tdxf10_gg_fhrz", "pxmz"),
+    RawSource("分红转增", "tdxf10_gg_fhrz", "fh"),
+    RawSource("分红转增图表", "tdxf10_gg_fhrz", "fh_zzt"),
+    RawSource("分红历史股利支付率", "tdxf10_gg_fhrz", "fhlszs_glzfl"),
+    RawSource("分红历史股息率", "tdxf10_gg_fhrz", "fhlszs_gxl"),
+    RawSource("分红排名股利支付率", "tdxf10_gg_fhrz", "fhpm_glzfl"),
+    RawSource("分红排名股息率", "tdxf10_gg_fhrz", "fhpm_gxl"),
+    RawSource("分红排名派现融资比", "tdxf10_gg_fhrz", "fhpm_pxrzb"),
+    RawSource("配股", "tdxf10_gg_fhrz", "pf"),
+    RawSource("增发获配日期", "tdxf10_gg_fhrz_zfhpmx", "zfpg_bgq"),
+    RawSource("增发获配明细", "tdxf10_gg_fhrz_zfhpmx", "zfpg"),
+    RawSource("增发", "tdxf10_gg_fhrz", "zf"),
+    RawSource("股权激励", "tdxf10_gg_fhrz", "gqjl"),
+    RawSource("可转债发行上市", "tdxf10_gg_fhrz", "kzzdfxyss"),
+)
+
 RESEARCH_RATING_SOURCES = (
     RawSource("投资评级统计", "tdxf10_gg_ybpj", "tzpjtj"),
     RawSource("业绩预期", "tdxf10_gg_ybpj", "yzyq"),
@@ -102,6 +119,9 @@ def generate_full_context(stock_code: str, data_root: Path) -> Path:
     business_statuses = source_statuses(
         data_root, valid_stock_code, BUSINESS_ANALYSIS_SOURCES
     )
+    dividend_statuses = source_statuses(
+        data_root, valid_stock_code, DIVIDEND_FINANCING_SOURCES
+    )
     research_statuses = source_statuses(
         data_root, valid_stock_code, RESEARCH_RATING_SOURCES
     )
@@ -112,6 +132,7 @@ def generate_full_context(stock_code: str, data_root: Path) -> Path:
         company_statuses
         + financial_statuses
         + business_statuses
+        + dividend_statuses
         + research_statuses
         + industry_statuses
     )
@@ -126,6 +147,7 @@ def generate_full_context(stock_code: str, data_root: Path) -> Path:
             "company_overview_sources": render_sources(company_statuses),
             "financial_analysis_sources": render_sources(financial_statuses),
             "business_analysis_sources": render_sources(business_statuses),
+            "dividend_financing_sources": render_sources(dividend_statuses),
             "research_rating_sources": render_sources(research_statuses),
             "industry_analysis_sources": render_sources(industry_statuses),
             "all_sources": render_sources(all_statuses),
