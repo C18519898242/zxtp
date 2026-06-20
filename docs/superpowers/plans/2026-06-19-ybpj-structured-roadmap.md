@@ -2,7 +2,7 @@
 
 **目标：** 将 ybpj 的 5 类 raw JSON 分阶段写入 DuckDB，并在 AI Context 中呈现可读的评级与预测信息。
 
-**当前状态：** 阶段 1 与阶段 3 已完成。DuckDB 已支持评级统计、逐篇研报，以及 `ylyctj` 的五个盈利预测原始结果集；阶段 2 与阶段 4 尚未结构化。
+**当前状态：** 阶段 1、阶段 3、阶段 4 与阶段 5 已完成。DuckDB 已支持评级统计、逐篇研报、`ylyctj` 的五个盈利预测原始结果集，以及 `yzyq` 的四个业绩预期与价格原始结果集；阶段 2 尚未结构化。
 
 **共同约束：** 每一阶段都必须保留 `source_path`、`source_module`、`source_fetched_at`、`source_response_hash` 和 `structured_at`，并在下载后自动解析。DuckDB 被 DBeaver 占用时，下载或生成 AI Context 的提示必须明确说明原因。
 
@@ -14,8 +14,8 @@
 - [x] 阶段 1：评级统计与逐篇研报
 - [ ] 阶段 2：机构盈利预测明细
 - [x] 阶段 3：盈利预测汇总（原始字段优先）
-- [ ] 阶段 4：业绩预期与价格序列
-- [ ] 阶段 5：AI Context 完整展示与回归验证
+- [x] 阶段 4：业绩预期与价格序列（原始字段优先）
+- [x] 阶段 5：AI Context 展示与回归验证
 
 ## 阶段 0：字段字典与样本基线
 
@@ -155,11 +155,11 @@ CREATE TABLE research_reports (
 
 **任务：**
 
-- [ ] 在字段字典中确认 `T003, T005, T024, T025, T031, T032, T033` 与 `T026, T030, T005, T006, T007` 的口径。
-- [ ] 使用多日期、空值和非交易日样本编写失败测试。
-- [ ] 分表实现解析与股票级模块替换，价格序列主键使用 `stock_code + trading_day`。
-- [ ] 仅在 AI Context 展示当前业绩预期和最近收盘价；完整价格序列保留给 DuckDB 分析，避免 Markdown 膨胀。
-- [ ] 运行完整测试套件。
+- [x] 为四个结果集建立独立 raw 样本，验证它们不会被合并成一行，并覆盖股票级替换与空结果集。
+- [x] 分表实现解析与股票级模块替换；价格序列主键使用 `stock_code + trading_day`。
+- [x] 在 AI Context 展示原始预期日期、最近交易日和原始收盘价；完整价格序列保留给 DuckDB 分析，避免 Markdown 膨胀。
+- [x] 运行完整测试套件。
+- [ ] 后续确认 `T003, T005, T024, T025, T031, T032, T033` 与 `T026, T030, T005, T006, T007` 的业务口径、单位和空值含义；确认前保留 `raw_*` 命名。
 
 **验收：** 日频价格没有重复日期；AI Context 不会嵌入完整历史价格列表。
 
@@ -167,11 +167,11 @@ CREATE TABLE research_reports (
 
 **任务：**
 
-- [ ] 在 `src/zxtp/ai_context.py` 增加 `render_research_ratings(data_root, stock_code)`；数据库不存在、表不存在、记录为空和 DBeaver 占用时返回可读提示，不让全文生成失败。
-- [ ] 在 `src/zxtp/templates/ai_context/full_context.md.tpl` 用 `{research_ratings}` 替换“研报评级”的空占位。
-- [ ] 在 `tests/test_ai_context.py` 构造 raw -> Structured -> Markdown 端到端样本，断言最近研报标题、机构和评级出现。
-- [ ] 检查 `fetch-all` 先完成 ybpj 解析再生成 AI Context，确保一次下载得到最新文档。
-- [ ] 运行 `python -m unittest discover -s tests -v` 和 `git diff --check`。
+- [x] 在 `src/zxtp/ai_context.py` 使用 `render_research_ratings(data_root, stock_code)`；数据库不存在、表不存在、记录为空和 DBeaver 占用时返回可读提示，不让全文生成失败。
+- [x] 在 `src/zxtp/templates/ai_context/full_context.md.tpl` 使用 `{research_ratings}` 展示研报评级章节。
+- [x] 在 `tests/test_ai_context.py` 构造 raw -> Structured -> Markdown 端到端样本，断言研报、盈利预测和业绩预期价格摘要出现。
+- [x] 验证 `fetch-ybpj`、UI 和 `fetch-all` 均在下载完成后调用 `parse_research_ratings`，使一次下载写入最新结构化数据。
+- [x] 运行 `python -m unittest discover -s tests -v` 和 `git diff --check`。
 
 **验收：** 在关闭 DBeaver 后，UI 的“下载数据 -> 研报评级”会更新 DuckDB；随后“生成 AI Context”能展示最近研报与评级概览。
 
@@ -182,4 +182,5 @@ CREATE TABLE research_reports (
 | 2026-06-19 | `ycpjyjbg` | `T011` 研报标识、`sj` 日期、`pj` 评级、`jg` 机构、`ytxt` 正文、`T004` 评分、`T039` 标题 | 002736 raw 样本 |
 | 2026-06-19 | `ylycmx` | `nyear` 预测起始年份，结果集 2 含日期、评级、目标价、三列预测值和机构 | 002736 raw 样本；具体预测值口径待跨股票核验 |
 | 2026-06-20 | `tzpjtj` | `T016` 为最新评级日期；`sj` 为时间段天数；`zj/zc/zx/jc/mc` 依次为买入/增持/中性/减持/卖出数量；`mr` 为合计；`pj` 为评级系数 | 投资评级统计页面与 002736 raw 样本逐行对照 |
-| 2026-06-20 | `ylyctj` | 结果集 1 的 `nyear` 为预测起始年份；结果集 4 的 `rq` 为数据日期；结果集 5 的 `rq` 为来源日期、`T003` 为公司名称。其余字段按 `raw_*` 保存，未确认财务口径和单位。 | 002736 raw 样本与阶段 3 独立结果集测试 |
+| 2026-06-20 | `ylyctj` | 结果集 1 的 `nyear` 为预测起始年份。结果集 3 的 `T055/T059/T064/T018/T118/T003/T012` 分别为每股收益、每股净资产、ROE、归母净利润、归母净利润增长率、营业收入、营业利润；结果集 2 的 `T036-T038`、`T027-T029`、`T024-T026`、`T033-T035`、`T021-T023`、`T030-T032` 分别是这六项指标的未来三年预测。结果集 4 的 `rq` 为数据日期；结果集 5 的 `rq` 为来源日期、`T003` 为公司名称。 | 盈利预测统计页面截图与 002736 raw 样本逐项对照 |
+| 2026-06-20 | `yzyq` | 结果集 4 的 `TradingDay` 为交易日，`ClosePrice` 保存为 `raw_close_price`。结果集 1 至 3 的字段以及收盘价的复权、单位口径尚未确认，均按 `raw_*` 保存。 | 002736 raw 样本、阶段 4 独立结果集与 AI Context 测试 |

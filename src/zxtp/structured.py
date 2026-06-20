@@ -15,6 +15,7 @@ RESEARCH_RATING_ENTRY = "tdxf10_gg_ybpj"
 RESEARCH_RATING_SUMMARY_MODULE = "tzpjtj"
 RESEARCH_REPORT_MODULE = "ycpjyjbg"
 EARNINGS_FORECAST_MODULE = "ylyctj"
+PERFORMANCE_EXPECTATION_MODULE = "yzyq"
 
 COMPANY_OVERVIEW_FIELDS = {
     "name": "T003",
@@ -116,6 +117,46 @@ EARNINGS_FORECAST_METADATA_FIELDS = {
     "company_name": "T003",
 }
 
+EARNINGS_FORECAST_YEARLY_METRIC_FIELDS = {
+    "earnings_per_share": ("T036", "T037", "T038"),
+    "book_value_per_share": ("T027", "T028", "T029"),
+    "return_on_equity_pct": ("T024", "T025", "T026"),
+    "net_profit_parent_wan": ("T033", "T034", "T035"),
+    "operating_revenue_wan": ("T021", "T022", "T023"),
+    "operating_profit_wan": ("T030", "T031", "T032"),
+}
+
+PERFORMANCE_EXPECTATION_FIELDS = {
+    "raw_defdate": "defdate",
+    "raw_mxdef": "mxdef",
+    "raw_t003": "T003",
+    "raw_t005": "T005",
+    "raw_t024": "T024",
+    "raw_t025": "T025",
+    "raw_t031": "T031",
+    "raw_t032": "T032",
+    "raw_t033": "T033",
+}
+
+PERFORMANCE_EXPECTATION_ESTIMATE_FIELDS = {
+    "raw_t026": "T026",
+    "raw_t030": "T030",
+    "raw_t005": "T005",
+    "raw_t006": "T006",
+    "raw_t007": "T007",
+}
+
+ADJUSTMENT_FACTOR_FIELDS = {
+    "end_date": "EndDate",
+    "raw_adjusting_factor": "AdjustingFactor",
+    "raw_adjusting_const": "AdjustingConst",
+}
+
+DAILY_CLOSE_PRICE_FIELDS = {
+    "trading_day": "TradingDay",
+    "raw_close_price": "ClosePrice",
+}
+
 
 def parse_company_overview(stock_code: str, data_root: Path) -> Path:
     valid_stock_code = validate_stock_code(stock_code)
@@ -176,6 +217,11 @@ def parse_research_ratings(stock_code: str, data_root: Path) -> Path:
         stock_code=valid_stock_code,
         module=EARNINGS_FORECAST_MODULE,
     )
+    performance_paths = writer.paths(
+        entry=RESEARCH_RATING_ENTRY,
+        stock_code=valid_stock_code,
+        module=PERFORMANCE_EXPECTATION_MODULE,
+    )
     for paths in (summary_paths, report_paths):
         if not paths.data_path.exists():
             raise TqlexError(f"research rating raw JSON not found: {paths.data_path}")
@@ -185,6 +231,11 @@ def parse_research_ratings(stock_code: str, data_root: Path) -> Path:
     forecast_rows_by_result_set = (
         all_result_set_rows(read_json_object(forecast_paths.data_path))
         if forecast_paths.data_path.exists()
+        else None
+    )
+    performance_rows_by_result_set = (
+        all_result_set_rows(read_json_object(performance_paths.data_path))
+        if performance_paths.data_path.exists()
         else None
     )
     summary_metadata = (
@@ -202,6 +253,11 @@ def parse_research_ratings(stock_code: str, data_root: Path) -> Path:
         if forecast_paths.meta_path.exists()
         else {}
     )
+    performance_metadata = (
+        read_json_object(performance_paths.meta_path)
+        if performance_paths.meta_path.exists()
+        else {}
+    )
     database_path = data_root / "warehouse" / "research.duckdb"
     database_path.parent.mkdir(parents=True, exist_ok=True)
     structured_at = now_shanghai_iso()
@@ -214,6 +270,11 @@ def parse_research_ratings(stock_code: str, data_root: Path) -> Path:
         connection.execute(EARNINGS_FORECAST_HISTORY_SCHEMA)
         connection.execute(EARNINGS_FORECAST_SNAPSHOTS_SCHEMA)
         connection.execute(EARNINGS_FORECAST_METADATA_SCHEMA)
+        connection.execute(EARNINGS_FORECAST_YEARLY_METRICS_SCHEMA)
+        connection.execute(PERFORMANCE_EXPECTATIONS_SCHEMA)
+        connection.execute(PERFORMANCE_EXPECTATION_ESTIMATES_SCHEMA)
+        connection.execute(ADJUSTMENT_FACTORS_SCHEMA)
+        connection.execute(DAILY_CLOSE_PRICES_SCHEMA)
         connection.execute("BEGIN")
         try:
             replace_research_rating_summaries(
@@ -239,6 +300,23 @@ def parse_research_ratings(stock_code: str, data_root: Path) -> Path:
                     rows_by_result_set=forecast_rows_by_result_set,
                     paths=forecast_paths,
                     metadata=forecast_metadata,
+                    structured_at=structured_at,
+                )
+                replace_earnings_forecast_yearly_metrics(
+                    connection,
+                    stock_code=valid_stock_code,
+                    rows_by_result_set=forecast_rows_by_result_set,
+                    paths=forecast_paths,
+                    metadata=forecast_metadata,
+                    structured_at=structured_at,
+                )
+            if performance_rows_by_result_set is not None:
+                replace_performance_expectation_result_sets(
+                    connection,
+                    stock_code=valid_stock_code,
+                    rows_by_result_set=performance_rows_by_result_set,
+                    paths=performance_paths,
+                    metadata=performance_metadata,
                     structured_at=structured_at,
                 )
         except Exception:
@@ -422,52 +500,202 @@ def replace_earnings_forecast_result_sets(
     metadata: dict[str, Any],
     structured_at: str,
 ) -> None:
-    replace_earnings_forecast_table(
+    replace_raw_result_set_table(
         connection,
         table_name="earnings_forecast_windows",
         fields=EARNINGS_FORECAST_WINDOW_FIELDS,
+        source_module=EARNINGS_FORECAST_MODULE,
         stock_code=stock_code,
         rows=result_set_at(rows_by_result_set, 0),
         paths=paths,
         metadata=metadata,
         structured_at=structured_at,
     )
-    replace_earnings_forecast_table(
+    replace_raw_result_set_table(
         connection,
         table_name="earnings_forecast_consensuses",
         fields=EARNINGS_FORECAST_CONSENSUS_FIELDS,
+        source_module=EARNINGS_FORECAST_MODULE,
         stock_code=stock_code,
         rows=result_set_at(rows_by_result_set, 1),
         paths=paths,
         metadata=metadata,
         structured_at=structured_at,
     )
-    replace_earnings_forecast_table(
+    replace_raw_result_set_table(
         connection,
         table_name="earnings_forecast_history",
         fields=EARNINGS_FORECAST_HISTORY_FIELDS,
+        source_module=EARNINGS_FORECAST_MODULE,
         stock_code=stock_code,
         rows=result_set_at(rows_by_result_set, 2),
         paths=paths,
         metadata=metadata,
         structured_at=structured_at,
     )
-    replace_earnings_forecast_table(
+    replace_raw_result_set_table(
         connection,
         table_name="earnings_forecast_snapshots",
         fields=EARNINGS_FORECAST_SNAPSHOT_FIELDS,
+        source_module=EARNINGS_FORECAST_MODULE,
         stock_code=stock_code,
         rows=result_set_at(rows_by_result_set, 3),
         paths=paths,
         metadata=metadata,
         structured_at=structured_at,
     )
-    replace_earnings_forecast_table(
+    replace_raw_result_set_table(
         connection,
         table_name="earnings_forecast_metadata",
         fields=EARNINGS_FORECAST_METADATA_FIELDS,
+        source_module=EARNINGS_FORECAST_MODULE,
         stock_code=stock_code,
         rows=result_set_at(rows_by_result_set, 4),
+        paths=paths,
+        metadata=metadata,
+        structured_at=structured_at,
+    )
+
+
+def replace_earnings_forecast_yearly_metrics(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    stock_code: str,
+    rows_by_result_set: list[list[dict[str, Any]]],
+    paths: Any,
+    metadata: dict[str, Any],
+    structured_at: str,
+) -> None:
+    connection.execute(
+        "DELETE FROM earnings_forecast_yearly_metrics WHERE stock_code = ?",
+        [stock_code],
+    )
+
+    metrics_by_year: dict[int, dict[str, Any]] = {}
+    for row in result_set_at(rows_by_result_set, 2):
+        fiscal_year = parse_integer(normalize_text(row.get("T002")))
+        if fiscal_year is None:
+            continue
+        metrics_by_year[fiscal_year] = {
+            "fiscal_year": fiscal_year,
+            "period_type": "actual",
+            "earnings_per_share": parse_float(normalize_text(row.get("T055"))),
+            "book_value_per_share": parse_float(normalize_text(row.get("T059"))),
+            "return_on_equity_pct": parse_float(normalize_text(row.get("T064"))),
+            "net_profit_parent_wan": parse_float(normalize_text(row.get("T018"))),
+            "net_profit_growth_pct": parse_float(normalize_text(row.get("T118"))),
+            "operating_revenue_wan": parse_float(normalize_text(row.get("T003"))),
+            "operating_profit_wan": parse_float(normalize_text(row.get("T012"))),
+        }
+
+    forecast_start_year = next(
+        (
+            parse_integer(normalize_text(row.get("nyear")))
+            for row in result_set_at(rows_by_result_set, 0)
+            if parse_integer(normalize_text(row.get("nyear"))) is not None
+        ),
+        None,
+    )
+    consensus_rows = result_set_at(rows_by_result_set, 1)
+    if forecast_start_year is not None and consensus_rows:
+        consensus = consensus_rows[0]
+        for offset in range(3):
+            fiscal_year = forecast_start_year + offset
+            metrics_by_year[fiscal_year] = {
+                "fiscal_year": fiscal_year,
+                "period_type": "forecast",
+                "net_profit_growth_pct": None,
+                **{
+                    field: parse_float(normalize_text(consensus.get(columns[offset])))
+                    for field, columns in EARNINGS_FORECAST_YEARLY_METRIC_FIELDS.items()
+                },
+            }
+
+    previous_net_profit: float | None = None
+    values = []
+    for fiscal_year in sorted(metrics_by_year):
+        metrics = metrics_by_year[fiscal_year]
+        net_profit_parent_wan = metrics["net_profit_parent_wan"]
+        if metrics["period_type"] == "forecast":
+            if previous_net_profit not in (None, 0) and net_profit_parent_wan is not None:
+                metrics["net_profit_growth_pct"] = (
+                    net_profit_parent_wan / previous_net_profit - 1
+                ) * 100
+        previous_net_profit = net_profit_parent_wan
+        values.append(
+            [
+                stock_code,
+                fiscal_year,
+                metrics["period_type"],
+                metrics.get("earnings_per_share"),
+                metrics.get("book_value_per_share"),
+                metrics.get("return_on_equity_pct"),
+                net_profit_parent_wan,
+                metrics.get("net_profit_growth_pct"),
+                metrics.get("operating_revenue_wan"),
+                metrics.get("operating_profit_wan"),
+                paths.data_path.as_posix(),
+                RESEARCH_RATING_ENTRY,
+                EARNINGS_FORECAST_MODULE,
+                metadata.get("fetched_at"),
+                metadata.get("response_hash"),
+                structured_at,
+            ]
+        )
+
+    if values:
+        connection.executemany(EARNINGS_FORECAST_YEARLY_METRICS_INSERT, values)
+
+
+def replace_performance_expectation_result_sets(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    stock_code: str,
+    rows_by_result_set: list[list[dict[str, Any]]],
+    paths: Any,
+    metadata: dict[str, Any],
+    structured_at: str,
+) -> None:
+    replace_raw_result_set_table(
+        connection,
+        table_name="performance_expectations",
+        fields=PERFORMANCE_EXPECTATION_FIELDS,
+        source_module=PERFORMANCE_EXPECTATION_MODULE,
+        stock_code=stock_code,
+        rows=result_set_at(rows_by_result_set, 0),
+        paths=paths,
+        metadata=metadata,
+        structured_at=structured_at,
+    )
+    replace_raw_result_set_table(
+        connection,
+        table_name="performance_expectation_estimates",
+        fields=PERFORMANCE_EXPECTATION_ESTIMATE_FIELDS,
+        source_module=PERFORMANCE_EXPECTATION_MODULE,
+        stock_code=stock_code,
+        rows=result_set_at(rows_by_result_set, 1),
+        paths=paths,
+        metadata=metadata,
+        structured_at=structured_at,
+    )
+    replace_raw_result_set_table(
+        connection,
+        table_name="adjustment_factors",
+        fields=ADJUSTMENT_FACTOR_FIELDS,
+        source_module=PERFORMANCE_EXPECTATION_MODULE,
+        stock_code=stock_code,
+        rows=result_set_at(rows_by_result_set, 2),
+        paths=paths,
+        metadata=metadata,
+        structured_at=structured_at,
+    )
+    replace_raw_result_set_table(
+        connection,
+        table_name="daily_close_prices",
+        fields=DAILY_CLOSE_PRICE_FIELDS,
+        source_module=PERFORMANCE_EXPECTATION_MODULE,
+        stock_code=stock_code,
+        rows=result_set_at(rows_by_result_set, 3),
         paths=paths,
         metadata=metadata,
         structured_at=structured_at,
@@ -480,11 +708,12 @@ def result_set_at(
     return rows_by_result_set[index] if index < len(rows_by_result_set) else []
 
 
-def replace_earnings_forecast_table(
+def replace_raw_result_set_table(
     connection: duckdb.DuckDBPyConnection,
     *,
     table_name: str,
     fields: dict[str, str],
+    source_module: str,
     stock_code: str,
     rows: list[dict[str, Any]],
     paths: Any,
@@ -514,7 +743,7 @@ def replace_earnings_forecast_table(
                 *(normalize_text(row.get(source_name)) for source_name in fields.values()),
                 paths.data_path.as_posix(),
                 RESEARCH_RATING_ENTRY,
-                EARNINGS_FORECAST_MODULE,
+                source_module,
                 metadata.get("fetched_at"),
                 metadata.get("response_hash"),
                 structured_at,
@@ -813,5 +1042,111 @@ CREATE TABLE IF NOT EXISTS earnings_forecast_metadata (
     source_fetched_at VARCHAR,
     source_response_hash VARCHAR,
     structured_at VARCHAR NOT NULL
+)
+"""
+
+
+EARNINGS_FORECAST_YEARLY_METRICS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS earnings_forecast_yearly_metrics (
+    stock_code VARCHAR NOT NULL,
+    fiscal_year INTEGER NOT NULL,
+    period_type VARCHAR NOT NULL,
+    earnings_per_share DOUBLE,
+    book_value_per_share DOUBLE,
+    return_on_equity_pct DOUBLE,
+    net_profit_parent_wan DOUBLE,
+    net_profit_growth_pct DOUBLE,
+    operating_revenue_wan DOUBLE,
+    operating_profit_wan DOUBLE,
+    source_path VARCHAR NOT NULL,
+    source_entry VARCHAR NOT NULL,
+    source_module VARCHAR NOT NULL,
+    source_fetched_at VARCHAR,
+    source_response_hash VARCHAR,
+    structured_at VARCHAR NOT NULL,
+    PRIMARY KEY (stock_code, fiscal_year)
+)
+"""
+
+
+EARNINGS_FORECAST_YEARLY_METRICS_INSERT = """
+INSERT INTO earnings_forecast_yearly_metrics (
+    stock_code, fiscal_year, period_type, earnings_per_share, book_value_per_share,
+    return_on_equity_pct, net_profit_parent_wan, net_profit_growth_pct,
+    operating_revenue_wan, operating_profit_wan, source_path, source_entry,
+    source_module, source_fetched_at, source_response_hash, structured_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"""
+
+
+PERFORMANCE_EXPECTATIONS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS performance_expectations (
+    stock_code VARCHAR NOT NULL,
+    raw_defdate VARCHAR,
+    raw_mxdef VARCHAR,
+    raw_t003 VARCHAR,
+    raw_t005 VARCHAR,
+    raw_t024 VARCHAR,
+    raw_t025 VARCHAR,
+    raw_t031 VARCHAR,
+    raw_t032 VARCHAR,
+    raw_t033 VARCHAR,
+    source_path VARCHAR NOT NULL,
+    source_entry VARCHAR NOT NULL,
+    source_module VARCHAR NOT NULL,
+    source_fetched_at VARCHAR,
+    source_response_hash VARCHAR,
+    structured_at VARCHAR NOT NULL
+)
+"""
+
+
+PERFORMANCE_EXPECTATION_ESTIMATES_SCHEMA = """
+CREATE TABLE IF NOT EXISTS performance_expectation_estimates (
+    stock_code VARCHAR NOT NULL,
+    raw_t026 VARCHAR,
+    raw_t030 VARCHAR,
+    raw_t005 VARCHAR,
+    raw_t006 VARCHAR,
+    raw_t007 VARCHAR,
+    source_path VARCHAR NOT NULL,
+    source_entry VARCHAR NOT NULL,
+    source_module VARCHAR NOT NULL,
+    source_fetched_at VARCHAR,
+    source_response_hash VARCHAR,
+    structured_at VARCHAR NOT NULL
+)
+"""
+
+
+ADJUSTMENT_FACTORS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS adjustment_factors (
+    stock_code VARCHAR NOT NULL,
+    end_date VARCHAR,
+    raw_adjusting_factor VARCHAR,
+    raw_adjusting_const VARCHAR,
+    source_path VARCHAR NOT NULL,
+    source_entry VARCHAR NOT NULL,
+    source_module VARCHAR NOT NULL,
+    source_fetched_at VARCHAR,
+    source_response_hash VARCHAR,
+    structured_at VARCHAR NOT NULL
+)
+"""
+
+
+DAILY_CLOSE_PRICES_SCHEMA = """
+CREATE TABLE IF NOT EXISTS daily_close_prices (
+    stock_code VARCHAR NOT NULL,
+    trading_day VARCHAR NOT NULL,
+    raw_close_price VARCHAR,
+    source_path VARCHAR NOT NULL,
+    source_entry VARCHAR NOT NULL,
+    source_module VARCHAR NOT NULL,
+    source_fetched_at VARCHAR,
+    source_response_hash VARCHAR,
+    structured_at VARCHAR NOT NULL,
+    PRIMARY KEY (stock_code, trading_day)
 )
 """

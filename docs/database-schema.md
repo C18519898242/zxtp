@@ -20,6 +20,11 @@ D:/zxtp_data/warehouse/research.duckdb
 | `earnings_forecast_history` | 一年对应的一组原始历史指标 | `ybpj/ylyctj` 结果集 3 |
 | `earnings_forecast_snapshots` | 一个日期对应的一组原始预测快照值 | `ybpj/ylyctj` 结果集 4 |
 | `earnings_forecast_metadata` | 一条盈利预测的来源日期和公司名称元信息 | `ybpj/ylyctj` 结果集 5 |
+| `earnings_forecast_yearly_metrics` | 一个财年的已确认盈利指标 | `ybpj/ylyctj` 结果集 1 至 3 |
+| `performance_expectations` | 一条业绩预期原始记录 | `ybpj/yzyq` 结果集 1 |
+| `performance_expectation_estimates` | 一条业绩预期估算原始记录 | `ybpj/yzyq` 结果集 2 |
+| `adjustment_factors` | 一条调整因子原始记录 | `ybpj/yzyq` 结果集 3 |
+| `daily_close_prices` | 一个交易日的原始收盘价记录 | `ybpj/yzyq` 结果集 4 |
 
 ## 所有表共有的溯源字段
 
@@ -114,7 +119,7 @@ D:/zxtp_data/warehouse/research.duckdb
 
 这五张表来自同一份 `ylyctj` raw JSON 的五个结果集。它们的行粒度不同，不能横向拼成一张表；程序按每张表的股票代码整体替换，以保持与最新 raw 缓存一致。
 
-目前只把已确认的年份、日期、公司名称命名为业务字段。其余 `raw_t...`、`raw_jg` 字段按 TQLEX 原样保存，尚未确认对应的是营收、利润、每股指标还是其他财务口径，也没有假设单位。
+原始表继续保留所有 `raw_t...`、`raw_jg` 字段。已确认指标会另外写入年度派生表，不会改变或覆盖 raw 字段。
 
 | 表名 | 一行代表什么 | 已确认字段 | 原始字段 |
 | --- | --- | --- | --- |
@@ -123,12 +128,46 @@ D:/zxtp_data/warehouse/research.duckdb
 | `earnings_forecast_history` | 一个财年对应的历史原始值 | `fiscal_year`：财年 | `T055`、`T059`、`T064`、`T018`、`T003`、`T012`、`T118` |
 | `earnings_forecast_snapshots` | 一个数据日期对应的原始快照 | `snapshot_date`：数据日期 | `jg`、`T019`（存为 `raw_jg`、`raw_t019`） |
 | `earnings_forecast_metadata` | 一条数据来源元信息 | `metadata_date`：数据日期；`company_name`：公司名称 | `t023`（存为 `raw_t023`） |
+| `earnings_forecast_yearly_metrics` | 一个财年指标集合 | `fiscal_year`、`period_type`，以及下方列出的确认指标 | 由结果集 1 至 3 派生，raw 表仍保留来源 |
+
+### `earnings_forecast_yearly_metrics`：年度可读指标
+
+`period_type` 为 `actual` 表示历史实际值，为 `forecast` 表示未来预测值。金额源数据单位是万元，AI Context 展示时换算为亿元；DuckDB 中仍保存 `*_wan` 的万元原值。
+
+| 字段 | 含义 | 来源字段 |
+| --- | --- | --- |
+| `earnings_per_share` | 每股收益，元 | 实际 `T055`；预测 `T036/T037/T038` |
+| `book_value_per_share` | 每股净资产，元 | 实际 `T059`；预测 `T027/T028/T029` |
+| `return_on_equity_pct` | 净资产收益率，% | 实际 `T064`；预测 `T024/T025/T026` |
+| `net_profit_parent_wan` | 归属母公司净利润，万元 | 实际 `T018`；预测 `T033/T034/T035` |
+| `net_profit_growth_pct` | 归母净利润同比增长率，% | 实际 `T118`；预测由相邻年度净利润计算 |
+| `operating_revenue_wan` | 营业收入，万元 | 实际 `T003`；预测 `T021/T022/T023` |
+| `operating_profit_wan` | 营业利润，万元 | 实际 `T012`；预测 `T030/T031/T032` |
+
+市盈率不进入本表：当前 raw 数据无法稳定复现来源页面的预测市盈率，不能仅用当前收盘价和预测每股收益猜测口径。
 
 **使用建议：**
 
 - 在 DBeaver 中先按 `stock_code` 过滤；再分别查看这五张表，不要依赖行号把它们关联起来。
 - AI Context 只显示预测起始年度、来源日期与各表记录数，避免把未确认口径的数值误写成投资结论。
 - 后续字段字典确认后，可在保留 `raw_*` 原始列的基础上新增语义明确的业务列。
+
+## `performance_*` 与 `daily_close_prices`：业绩预期和价格原始结构
+
+这四张表来自 `yzyq` raw JSON 的四个结果集。它们按结果集分表保存，并在重新下载同一股票的 `yzyq` 后仅替换该股票在这四张表中的记录；空结果集只清空自己的表，不影响评级、研报或盈利预测统计。
+
+| 表名 | 一行代表什么 | 已确认字段 | 原始字段 |
+| --- | --- | --- | --- |
+| `performance_expectations` | 一条当前业绩预期原始记录 | 暂无 | `defdate`、`mxdef`、`T003`、`T005`、`T024`、`T025`、`T031`、`T032`、`T033`（存为 `raw_*`） |
+| `performance_expectation_estimates` | 一条业绩预期估算原始记录 | 暂无 | `T026`、`T030`、`T005`、`T006`、`T007`（存为 `raw_*`） |
+| `adjustment_factors` | 一条调整因子原始记录 | `end_date`：源字段 `EndDate` 的日期值 | `AdjustingFactor`、`AdjustingConst`（存为 `raw_*`） |
+| `daily_close_prices` | 一个交易日的原始收盘价 | `trading_day`：交易日 | `ClosePrice`（存为 `raw_close_price`，尚未确认复权和单位口径） |
+
+**使用建议：**
+
+- 用 `stock_code` 过滤后，按 `daily_close_prices.trading_day` 倒序查看最近价格；`raw_close_price` 是接口原始值，不应在未确认口径前用于收益率或估值计算。
+- `raw_defdate`、`raw_t030` 等看起来像日期或数值的字段仍只表示源字段，不代表已经确认的财务业务含义。
+- AI Context 只展示 `raw_defdate`、最近交易日、原始收盘价和记录数，避免将这些原始值误读为投资结论。
 
 ## 表之间如何关联
 
@@ -139,16 +178,18 @@ company_overviews.stock_code
     = research_rating_summaries.stock_code
     = research_reports.stock_code
     = earnings_forecast_*.stock_code
+    = earnings_forecast_yearly_metrics.stock_code
+    = performance_*.stock_code
+    = adjustment_factors.stock_code
+    = daily_close_prices.stock_code
 ```
 
-常见查看顺序：先打开 `company_overviews` 了解公司，再在 `research_reports` 按日期查看最近机构观点；`research_rating_summaries` 作为评级统计的原始数据补充；需要核对盈利预测来源时，再查看五张 `earnings_forecast_*` 表。
+常见查看顺序：先打开 `company_overviews` 了解公司，再在 `research_reports` 按日期查看最近机构观点；`research_rating_summaries` 作为评级统计的原始数据补充；需要核对预测来源时，再查看 `earnings_forecast_*` 和 `performance_*` 表；查看近期价格时使用 `daily_close_prices`。
 
 ## 后续会新增的表
 
-研报评级路线图中，阶段 2 和阶段 4 尚未实施，预计会增加：
+研报评级路线图中，阶段 2 尚未实施，预计会增加：
 
 - `earnings_forecast_details`：机构盈利预测明细。
-- `performance_expectations`：业绩预期。
-- `daily_close_prices`：价格序列。
 
 这些表完成后会继续补充到本文；在字段口径确认前，不会用含糊的 TQLEX 字段名伪装成确定的业务指标。

@@ -2,6 +2,9 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+import duckdb
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -11,6 +14,201 @@ from zxtp.tqlex import RawCacheWriter
 
 
 class AiContextGenerationTests(unittest.TestCase):
+    def test_renders_yearly_earnings_forecast_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            writer = RawCacheWriter(data_root)
+            for module in ("tzpjtj", "ycpjyjbg"):
+                writer.write(
+                    entry="tdxf10_gg_ybpj",
+                    params=["002736", module],
+                    stock_code="002736",
+                    module=module,
+                    source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_ybpj",
+                    json_data={"ErrorCode": 0, "ResultSets": []},
+                )
+            writer.write(
+                entry="tdxf10_gg_ybpj",
+                params=["002736", "ylyctj"],
+                stock_code="002736",
+                module="ylyctj",
+                source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_ybpj",
+                json_data={
+                    "ErrorCode": 0,
+                    "ResultSets": [
+                        {"ColDes": [{"Name": "nyear"}], "Content": [["2026"]]},
+                        {
+                            "ColDes": [
+                                {"Name": "T036"}, {"Name": "T037"}, {"Name": "T038"},
+                                {"Name": "T033"}, {"Name": "T034"}, {"Name": "T035"},
+                            ],
+                            "Content": [["1.135", "1.258", "1.353", "1242640", "1385040", "1502060"]],
+                        },
+                        {
+                            "ColDes": [
+                                {"Name": "T002"}, {"Name": "T055"}, {"Name": "T018"}, {"Name": "T118"},
+                            ],
+                            "Content": [
+                                ["2023", "0.669", "642729.41", "5.57"],
+                                ["2024", "0.855", "821685.32", "27.84"],
+                                ["2025", "1.081", "1107276.10", "34.76"],
+                            ],
+                        },
+                    ],
+                },
+            )
+            parse_research_ratings("002736", data_root)
+
+            output_path = generate_full_context("002736", data_root)
+
+            text = output_path.read_text(encoding="utf-8")
+            research_section = text.split("## 6. 研报评级", 1)[1].split(
+                "## 7. 行业分析", 1
+            )[0]
+            self.assertIn("#### 年度指标", research_section)
+            self.assertIn(
+                "| 指标 | 2023 实际 | 2024 实际 | 2025 实际 | 2026 预测 | 2027 预测 | 2028 预测 |",
+                research_section,
+            )
+            self.assertIn(
+                "| 每股收益（元） | 0.669 | 0.855 | 1.081 | 1.135 | 1.258 | 1.353 |",
+                research_section,
+            )
+            self.assertIn(
+                "| 归母净利润（亿元） | 64.27 | 82.17 | 110.73 | 124.26 | 138.50 | 150.21 |",
+                research_section,
+            )
+            self.assertIn(
+                "| 归母净利润增长率（%） | 5.57 | 27.84 | 34.76 | 12.22 | 11.46 | 8.45 |",
+                research_section,
+            )
+            self.assertNotIn("市盈率", research_section)
+
+    def test_keeps_rating_content_when_stage_four_tables_are_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            database_path = data_root / "warehouse" / "research.duckdb"
+            database_path.parent.mkdir(parents=True)
+            with duckdb.connect(str(database_path)) as connection:
+                connection.execute(
+                    """
+                    CREATE TABLE research_rating_summaries (
+                        stock_code VARCHAR,
+                        rating_date VARCHAR,
+                        rating_value DOUBLE,
+                        raw_sj BIGINT,
+                        raw_zj BIGINT,
+                        raw_mr BIGINT,
+                        raw_zc BIGINT,
+                        raw_zx BIGINT,
+                        raw_jc BIGINT,
+                        raw_mc BIGINT
+                    )
+                    """
+                )
+                connection.execute(
+                    """
+                    INSERT INTO research_rating_summaries VALUES
+                    ('002736', '20260527', 4.5, 30, 1, 1, 0, 0, 0, 0)
+                    """
+                )
+                connection.execute(
+                    """
+                    CREATE TABLE research_reports (
+                        stock_code VARCHAR,
+                        report_id VARCHAR,
+                        report_date VARCHAR,
+                        institution VARCHAR,
+                        rating VARCHAR,
+                        title VARCHAR
+                    )
+                    """
+                )
+
+            output_path = generate_full_context("002736", data_root)
+
+            text = output_path.read_text(encoding="utf-8")
+            research_section = text.split("## 6. 研报评级", 1)[1].split(
+                "## 7. 行业分析", 1
+            )[0]
+            self.assertIn("20260527", research_section)
+            self.assertNotIn("业绩预期与价格（原始结构化）", research_section)
+
+    def test_generates_ai_context_when_duckdb_is_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            database_path = data_root / "warehouse" / "research.duckdb"
+            database_path.parent.mkdir(parents=True)
+            database_path.touch()
+
+            with patch(
+                "zxtp.ai_context.duckdb.connect",
+                side_effect=duckdb.IOException("database is locked"),
+            ):
+                output_path = generate_full_context("002736", data_root)
+
+            text = output_path.read_text(encoding="utf-8")
+            self.assertIn("结构化研报评级暂不可读取", text)
+            self.assertIn("DBeaver", text)
+
+    def test_includes_performance_expectation_and_price_raw_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            writer = RawCacheWriter(data_root)
+            for module in ("tzpjtj", "ycpjyjbg"):
+                writer.write(
+                    entry="tdxf10_gg_ybpj",
+                    params=["002736", module],
+                    stock_code="002736",
+                    module=module,
+                    source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_ybpj",
+                    json_data={"ErrorCode": 0, "ResultSets": []},
+                )
+            writer.write(
+                entry="tdxf10_gg_ybpj",
+                params=["002736", "yzyq"],
+                stock_code="002736",
+                module="yzyq",
+                source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_ybpj",
+                json_data={
+                    "ErrorCode": 0,
+                    "ResultSets": [
+                        {
+                            "ColDes": [{"Name": "defdate"}],
+                            "Content": [["20261231"]],
+                        },
+                        {
+                            "ColDes": [{"Name": "T026"}],
+                            "Content": [["0"]],
+                        },
+                        {
+                            "ColDes": [{"Name": "EndDate"}],
+                            "Content": [["20260622"]],
+                        },
+                        {
+                            "ColDes": [
+                                {"Name": "TradingDay"},
+                                {"Name": "ClosePrice"},
+                            ],
+                            "Content": [["20250620", "11.040"]],
+                        },
+                    ],
+                },
+            )
+            parse_research_ratings("002736", data_root)
+
+            output_path = generate_full_context("002736", data_root)
+
+            text = output_path.read_text(encoding="utf-8")
+            research_section = text.split("## 6. 研报评级", 1)[1].split(
+                "## 7. 行业分析", 1
+            )[0]
+            self.assertIn("### 业绩预期与价格（原始结构化）", research_section)
+            self.assertIn("预期原始日期（defdate）：20261231", research_section)
+            self.assertIn("最近交易日：20250620", research_section)
+            self.assertIn("原始收盘价：11.040", research_section)
+            self.assertIn("字段口径尚待确认", research_section)
+
     def test_includes_earnings_forecast_raw_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             data_root = Path(tmp)

@@ -139,6 +139,270 @@ class CompanyOverviewStructuredTests(unittest.TestCase):
 
 
 class ResearchRatingStructuredTests(unittest.TestCase):
+    def test_derives_yearly_earnings_forecast_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            writer = RawCacheWriter(data_root)
+            for module in ("tzpjtj", "ycpjyjbg"):
+                writer.write(
+                    entry="tdxf10_gg_ybpj",
+                    params=["002736", module],
+                    stock_code="002736",
+                    module=module,
+                    source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_ybpj",
+                    json_data={"ErrorCode": 0, "ResultSets": []},
+                )
+            writer.write(
+                entry="tdxf10_gg_ybpj",
+                params=["002736", "ylyctj"],
+                stock_code="002736",
+                module="ylyctj",
+                source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_ybpj",
+                json_data={
+                    "ErrorCode": 0,
+                    "ResultSets": [
+                        {
+                            "ColDes": [{"Name": "nyear"}],
+                            "Content": [["2026"]],
+                        },
+                        {
+                            "ColDes": [
+                                {"Name": "T036"},
+                                {"Name": "T037"},
+                                {"Name": "T038"},
+                                {"Name": "T027"},
+                                {"Name": "T028"},
+                                {"Name": "T029"},
+                                {"Name": "T024"},
+                                {"Name": "T025"},
+                                {"Name": "T026"},
+                                {"Name": "T033"},
+                                {"Name": "T034"},
+                                {"Name": "T035"},
+                                {"Name": "T021"},
+                                {"Name": "T022"},
+                                {"Name": "T023"},
+                                {"Name": "T030"},
+                                {"Name": "T031"},
+                                {"Name": "T032"},
+                            ],
+                            "Content": [
+                                [
+                                    "1.135",
+                                    "1.258",
+                                    "1.353",
+                                    "12.04",
+                                    "13.01",
+                                    "14.05",
+                                    "9.80",
+                                    "10.25",
+                                    "10.32",
+                                    "1242640",
+                                    "1385040",
+                                    "1502060",
+                                    "2639700",
+                                    "2894380",
+                                    "3112040",
+                                    "1448200",
+                                    "1613500",
+                                    "1749660",
+                                ]
+                            ],
+                        },
+                        {
+                            "ColDes": [
+                                {"Name": "T002"},
+                                {"Name": "T055"},
+                                {"Name": "T059"},
+                                {"Name": "T064"},
+                                {"Name": "T018"},
+                                {"Name": "T003"},
+                                {"Name": "T012"},
+                                {"Name": "T118"},
+                            ],
+                            "Content": [
+                                [
+                                    "2025",
+                                    "1.0811",
+                                    "9.5485",
+                                    "8.43",
+                                    "1107276.10",
+                                    "2414329.66",
+                                    "1299963.88",
+                                    "34.76",
+                                ]
+                            ],
+                        },
+                    ],
+                },
+            )
+
+            database_path = structured.parse_research_ratings("002736", data_root)
+
+            with duckdb.connect(str(database_path), read_only=True) as connection:
+                actual = connection.execute(
+                    """
+                    SELECT period_type, earnings_per_share, net_profit_parent_wan,
+                           operating_revenue_wan, operating_profit_wan
+                    FROM earnings_forecast_yearly_metrics
+                    WHERE fiscal_year = 2025
+                    """
+                ).fetchone()
+                forecast = connection.execute(
+                    """
+                    SELECT period_type, earnings_per_share, net_profit_growth_pct
+                    FROM earnings_forecast_yearly_metrics
+                    WHERE fiscal_year = 2026
+                    """
+                ).fetchone()
+
+            self.assertEqual(
+                actual,
+                ("actual", 1.0811, 1107276.10, 2414329.66, 1299963.88),
+            )
+            self.assertEqual(forecast[:2], ("forecast", 1.135))
+            self.assertAlmostEqual(forecast[2], 12.22, places=2)
+
+    def test_parses_yzyq_result_sets_into_separate_raw_tables(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            writer = RawCacheWriter(data_root)
+            for module in ("tzpjtj", "ycpjyjbg"):
+                writer.write(
+                    entry="tdxf10_gg_ybpj",
+                    params=["002736", module],
+                    stock_code="002736",
+                    module=module,
+                    source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_ybpj",
+                    json_data={"ErrorCode": 0, "ResultSets": []},
+                )
+            writer.write(
+                entry="tdxf10_gg_ybpj",
+                params=["002736", "yzyq"],
+                stock_code="002736",
+                module="yzyq",
+                source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_ybpj",
+                json_data={
+                    "ErrorCode": 0,
+                    "ResultSets": [
+                        {
+                            "ColDes": [
+                                {"Name": "defdate"},
+                                {"Name": "T003"},
+                            ],
+                            "Content": [["20261231", "20260527"]],
+                        },
+                        {
+                            "ColDes": [
+                                {"Name": "T026"},
+                                {"Name": "T030"},
+                                {"Name": "T005"},
+                            ],
+                            "Content": [["0", "20260522", "1.180"]],
+                        },
+                        {
+                            "ColDes": [
+                                {"Name": "EndDate"},
+                                {"Name": "AdjustingFactor"},
+                                {"Name": "AdjustingConst"},
+                            ],
+                            "Content": [["20260622", "1", "3.54"]],
+                        },
+                        {
+                            "ColDes": [
+                                {"Name": "TradingDay"},
+                                {"Name": "ClosePrice"},
+                            ],
+                            "Content": [
+                                ["20250620", "11.040"],
+                                ["20250619", "10.900"],
+                            ],
+                        },
+                    ],
+                },
+            )
+
+            database_path = structured.parse_research_ratings("002736", data_root)
+
+            with duckdb.connect(str(database_path), read_only=True) as connection:
+                tables = {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT table_name FROM information_schema.tables"
+                    ).fetchall()
+                }
+                self.assertTrue(
+                    {
+                        "performance_expectations",
+                        "performance_expectation_estimates",
+                        "adjustment_factors",
+                        "daily_close_prices",
+                    }.issubset(tables)
+                )
+                expectation = connection.execute(
+                    "SELECT raw_defdate, raw_t003 FROM performance_expectations"
+                ).fetchone()
+                estimate = connection.execute(
+                    "SELECT raw_t026, raw_t030, raw_t005 "
+                    "FROM performance_expectation_estimates"
+                ).fetchone()
+                factor = connection.execute(
+                    "SELECT end_date, raw_adjusting_factor, raw_adjusting_const "
+                    "FROM adjustment_factors"
+                ).fetchone()
+                prices = connection.execute(
+                    "SELECT trading_day, raw_close_price FROM daily_close_prices "
+                    "ORDER BY trading_day DESC"
+                ).fetchall()
+
+            self.assertEqual(expectation, ("20261231", "20260527"))
+            self.assertEqual(estimate, ("0", "20260522", "1.180"))
+            self.assertEqual(factor, ("20260622", "1", "3.54"))
+            self.assertEqual(
+                prices,
+                [("20250620", "11.040"), ("20250619", "10.900")],
+            )
+
+            writer.write(
+                entry="tdxf10_gg_ybpj",
+                params=["002736", "yzyq"],
+                stock_code="002736",
+                module="yzyq",
+                source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_ybpj",
+                json_data={
+                    "ErrorCode": 0,
+                    "ResultSets": [
+                        {"ColDes": [], "Content": []},
+                        {"ColDes": [], "Content": []},
+                        {"ColDes": [], "Content": []},
+                        {
+                            "ColDes": [
+                                {"Name": "TradingDay"},
+                                {"Name": "ClosePrice"},
+                            ],
+                            "Content": [["20250623", "11.200"]],
+                        },
+                    ],
+                },
+            )
+            structured.parse_research_ratings("002736", data_root)
+
+            with duckdb.connect(str(database_path), read_only=True) as connection:
+                replacement_prices = connection.execute(
+                    "SELECT trading_day, raw_close_price FROM daily_close_prices"
+                ).fetchall()
+                empty_counts = connection.execute(
+                    """
+                    SELECT
+                        (SELECT count(*) FROM performance_expectations),
+                        (SELECT count(*) FROM performance_expectation_estimates),
+                        (SELECT count(*) FROM adjustment_factors)
+                    """
+                ).fetchone()
+
+            self.assertEqual(replacement_prices, [("20250623", "11.200")])
+            self.assertEqual(empty_counts, (0, 0, 0))
+
     def test_parses_earnings_forecast_result_sets_into_separate_raw_tables(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             data_root = Path(tmp)

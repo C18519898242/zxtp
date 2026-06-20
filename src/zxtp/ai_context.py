@@ -319,13 +319,74 @@ def render_research_ratings(data_root: Path, stock_code: str) -> str:
                 forecast_window = None
                 forecast_metadata = None
                 forecast_counts = None
+            try:
+                yearly_forecast_metrics = connection.execute(
+                    """
+                    SELECT
+                        fiscal_year, period_type, earnings_per_share,
+                        book_value_per_share, return_on_equity_pct,
+                        net_profit_parent_wan, net_profit_growth_pct,
+                        operating_revenue_wan, operating_profit_wan
+                    FROM earnings_forecast_yearly_metrics
+                    WHERE stock_code = ?
+                    ORDER BY fiscal_year
+                    """,
+                    [stock_code],
+                ).fetchall()
+            except duckdb.Error:
+                yearly_forecast_metrics = []
+            try:
+                performance_expectation = connection.execute(
+                    """
+                    SELECT raw_defdate
+                    FROM performance_expectations
+                    WHERE stock_code = ?
+                    ORDER BY raw_defdate DESC NULLS LAST
+                    LIMIT 1
+                    """,
+                    [stock_code],
+                ).fetchone()
+                daily_close_price = connection.execute(
+                    """
+                    SELECT trading_day, raw_close_price
+                    FROM daily_close_prices
+                    WHERE stock_code = ?
+                    ORDER BY trading_day DESC NULLS LAST
+                    LIMIT 1
+                    """,
+                    [stock_code],
+                ).fetchone()
+                performance_counts = connection.execute(
+                    """
+                    SELECT
+                        (SELECT count(*) FROM performance_expectations
+                         WHERE stock_code = ?),
+                        (SELECT count(*) FROM performance_expectation_estimates
+                         WHERE stock_code = ?),
+                        (SELECT count(*) FROM adjustment_factors
+                         WHERE stock_code = ?),
+                        (SELECT count(*) FROM daily_close_prices
+                         WHERE stock_code = ?)
+                    """,
+                    [stock_code, stock_code, stock_code, stock_code],
+                ).fetchone()
+            except duckdb.Error:
+                performance_expectation = None
+                daily_close_price = None
+                performance_counts = None
     except duckdb.Error:
         return (
             "结构化研报评级暂不可读取：DuckDB 数据库可能正被其他程序占用，"
             "或尚未生成相关数据表。请断开 DBeaver 连接后重新生成 AI Context。"
         )
 
-    if summary is None and not reports and forecast_window is None:
+    if (
+        summary is None
+        and not reports
+        and forecast_window is None
+        and performance_expectation is None
+        and daily_close_price is None
+    ):
         return "暂无结构化研报评级。请先下载研报评级数据。"
 
     sections = []
@@ -380,8 +441,42 @@ def render_research_ratings(data_root: Path, stock_code: str) -> str:
                     f"- 原始快照记录：{snapshot_count}",
                 ]
             )
-        forecast_lines.append("- 数值字段暂按原始 TQLEX 字段保存，尚未赋予财务口径。")
+        if yearly_forecast_metrics:
+            forecast_lines.extend(["", *render_yearly_forecast_metrics(yearly_forecast_metrics)])
+        forecast_lines.append(
+            "- 年度指标已采用确认字段映射；其他数值仍按原始 TQLEX 字段保存。"
+        )
         sections.append("\n".join(forecast_lines))
+
+    if performance_expectation is not None or daily_close_price is not None:
+        performance_lines = ["### 业绩预期与价格（原始结构化）"]
+        if performance_expectation is not None:
+            raw_defdate = format_context_value(performance_expectation[0])
+            if raw_defdate is not None:
+                performance_lines.append(
+                    f"- 预期原始日期（defdate）：{raw_defdate}"
+                )
+        if daily_close_price is not None:
+            trading_day = format_context_value(daily_close_price[0])
+            raw_close_price = format_context_value(daily_close_price[1])
+            if trading_day is not None:
+                performance_lines.append(f"- 最近交易日：{trading_day}")
+            if raw_close_price is not None:
+                performance_lines.append(f"- 原始收盘价：{raw_close_price}")
+        if performance_counts is not None:
+            expectation_count, estimate_count, factor_count, price_count = performance_counts
+            performance_lines.extend(
+                [
+                    f"- 当前预期记录：{expectation_count}",
+                    f"- 原始估算记录：{estimate_count}",
+                    f"- 复权原始记录：{factor_count}",
+                    f"- 收盘价记录：{price_count}",
+                ]
+            )
+        performance_lines.append(
+            "- 字段口径尚待确认，数值按 TQLEX 原始字段保存。"
+        )
+        sections.append("\n".join(performance_lines))
 
     return "\n\n".join(sections)
 
@@ -391,6 +486,45 @@ def format_context_value(value: Any) -> str | None:
         return None
     text = str(value).replace("\r", " ").replace("\n", " ").strip()
     return text or None
+
+
+def render_yearly_forecast_metrics(rows: list[tuple[Any, ...]]) -> list[str]:
+    metrics_by_year = {int(row[0]): row for row in rows}
+    years = sorted(metrics_by_year)
+    headers = [
+        f"{year} {'实际' if metrics_by_year[year][1] == 'actual' else '预测'}"
+        for year in years
+    ]
+    lines = [
+        "#### 年度指标",
+        "| 指标 | " + " | ".join(headers) + " |",
+        "| --- | " + " | ".join("---:" for _ in years) + " |",
+    ]
+    definitions = (
+        ("每股收益（元）", 2, lambda value: format_metric(value, 3)),
+        ("每股净资产（元）", 3, lambda value: format_metric(value, 3)),
+        ("净资产收益率（%）", 4, lambda value: format_metric(value, 2)),
+        ("归母净利润（亿元）", 5, format_wan_as_yi),
+        ("归母净利润增长率（%）", 6, lambda value: format_metric(value, 2)),
+        ("营业收入（亿元）", 7, format_wan_as_yi),
+        ("营业利润（亿元）", 8, format_wan_as_yi),
+    )
+    for label, index, formatter in definitions:
+        values = [formatter(metrics_by_year[year][index]) for year in years]
+        lines.append("| " + label + " | " + " | ".join(values) + " |")
+    return lines
+
+
+def format_metric(value: Any, decimal_places: int) -> str:
+    if value is None:
+        return "-"
+    return f"{float(value):.{decimal_places}f}"
+
+
+def format_wan_as_yi(value: Any) -> str:
+    if value is None:
+        return "-"
+    return f"{float(value) / 10000:.2f}"
 
 
 def source_statuses(
