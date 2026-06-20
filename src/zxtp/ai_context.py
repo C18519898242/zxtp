@@ -60,6 +60,16 @@ COMPANY_OVERVIEW_SELECT = ", ".join(
     field for _, field in COMPANY_OVERVIEW_DISPLAY_FIELDS
 )
 
+RESEARCH_RATING_COUNT_FIELDS = (
+    "raw_sj",
+    "raw_zj",
+    "raw_mr",
+    "raw_zc",
+    "raw_zx",
+    "raw_jc",
+    "raw_mc",
+)
+
 FINANCIAL_ANALYSIS_SOURCES = (
     RawSource("公司类型", "tdxf10_gg_cwfx", "gptype"),
     RawSource("财务诊断", "tdxf10_gg_cwfx", "cwzd"),
@@ -170,6 +180,7 @@ def generate_full_context(stock_code: str, data_root: Path) -> Path:
     research_statuses = source_statuses(
         data_root, valid_stock_code, RESEARCH_RATING_SOURCES
     )
+    research_ratings = render_research_ratings(data_root, valid_stock_code)
     industry_statuses = source_statuses(
         data_root, valid_stock_code, INDUSTRY_ANALYSIS_SOURCES
     )
@@ -198,6 +209,7 @@ def generate_full_context(stock_code: str, data_root: Path) -> Path:
             "financial_analysis_sources": render_sources(financial_statuses),
             "business_analysis_sources": render_sources(business_statuses),
             "dividend_financing_sources": render_sources(dividend_statuses),
+            "research_ratings": research_ratings,
             "research_rating_sources": render_sources(research_statuses),
             "industry_analysis_sources": render_sources(industry_statuses),
             "shareholder_research_sources": render_sources(shareholder_statuses),
@@ -240,6 +252,79 @@ def render_company_overview(data_root: Path, stock_code: str) -> str:
         if value is not None:
             details.append(f"- {label}：{value}")
     return "\n".join(details)
+
+
+def render_research_ratings(data_root: Path, stock_code: str) -> str:
+    database_path = data_root / "warehouse" / "research.duckdb"
+    if not database_path.exists():
+        return "暂无结构化研报评级。请先下载研报评级数据。"
+
+    try:
+        with duckdb.connect(str(database_path), read_only=True) as connection:
+            summary = connection.execute(
+                """
+                SELECT rating_date, rating_value, raw_sj, raw_zj, raw_mr, raw_zc,
+                       raw_zx, raw_jc, raw_mc
+                FROM research_rating_summaries
+                WHERE stock_code = ?
+                ORDER BY rating_date DESC NULLS LAST
+                LIMIT 1
+                """,
+                [stock_code],
+            ).fetchone()
+            reports = connection.execute(
+                """
+                SELECT report_date, institution, rating, title
+                FROM research_reports
+                WHERE stock_code = ?
+                ORDER BY report_date DESC NULLS LAST, report_id DESC
+                LIMIT 5
+                """,
+                [stock_code],
+            ).fetchall()
+    except duckdb.Error:
+        return (
+            "结构化研报评级暂不可读取：DuckDB 数据库可能正被其他程序占用，"
+            "或尚未生成相关数据表。请断开 DBeaver 连接后重新生成 AI Context。"
+        )
+
+    if summary is None and not reports:
+        return "暂无结构化研报评级。请先下载研报评级数据。"
+
+    sections = []
+    if summary is not None:
+        values = dict(
+            zip(("rating_date", "rating_value", *RESEARCH_RATING_COUNT_FIELDS), summary)
+        )
+        summary_lines = ["### 评级统计"]
+        rating_date = format_context_value(values["rating_date"])
+        if rating_date is not None:
+            summary_lines.append(f"- 统计日期：{rating_date}")
+        rating_value = format_context_value(values["rating_value"])
+        if rating_value is not None:
+            summary_lines.append(f"- 评分数值：{rating_value}")
+        raw_counts = ", ".join(
+            f"{field}={value}"
+            for field in RESEARCH_RATING_COUNT_FIELDS
+            if (value := format_context_value(values[field])) is not None
+        )
+        if raw_counts:
+            summary_lines.append(f"- 原始字段：{raw_counts}")
+        sections.append("\n".join(summary_lines))
+
+    if reports:
+        report_lines = ["### 最近研报"]
+        for report_date, institution, rating, title in reports:
+            fields = [
+                format_context_value(report_date),
+                format_context_value(institution),
+                format_context_value(rating),
+                format_context_value(title),
+            ]
+            report_lines.append("- " + " | ".join(value or "-" for value in fields))
+        sections.append("\n".join(report_lines))
+
+    return "\n\n".join(sections)
 
 
 def format_context_value(value: Any) -> str | None:

@@ -10,6 +10,7 @@ from unittest.mock import Mock, call, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+import zxtp.cli as cli
 from zxtp.cli import main
 from zxtp.tqlex import TqlexError, TqlexResponse
 
@@ -176,6 +177,35 @@ class CliFetchGsgkTests(unittest.TestCase):
 
 
 class CliFetchYbpjTests(unittest.TestCase):
+    def test_fetch_ybpj_parses_research_ratings_into_duckdb(self) -> None:
+        self.assertTrue(hasattr(cli, "parse_research_ratings"))
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_client = Mock()
+            fake_client.source_url.return_value = (
+                "http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_ybpj"
+            )
+            fake_client.call.return_value = TqlexResponse(
+                raw_text='{"ErrorCode":0,"ResultSets":[],"ResultSetNum":0}',
+                json_data={"ErrorCode": 0, "ResultSets": [], "ResultSetNum": 0},
+            )
+            database_path = Path(tmp) / "warehouse" / "research.duckdb"
+            stdout = io.StringIO()
+
+            with patch("zxtp.cli.TqlexClient", return_value=fake_client):
+                with patch(
+                    "zxtp.cli.parse_research_ratings",
+                    return_value=database_path,
+                ) as parse_research_ratings:
+                    with redirect_stdout(stdout):
+                        exit_code = main(["fetch-ybpj", "002736", "--data-root", tmp])
+
+            self.assertEqual(exit_code, 0)
+            parse_research_ratings.assert_called_once_with("002736", Path(tmp))
+            self.assertIn(
+                f"saved research rating structured data: {database_path}",
+                stdout.getvalue(),
+            )
+
     def test_fetch_ybpj_writes_each_raw_cache_and_returns_zero(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             fake_client = Mock()

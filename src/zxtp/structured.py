@@ -11,6 +11,9 @@ from .tqlex import RawCacheWriter, TqlexError, now_shanghai_iso, validate_stock_
 
 COMPANY_OVERVIEW_ENTRY = "tdxf10_gg_gsgk"
 COMPANY_OVERVIEW_MODULE = "gsgk"
+RESEARCH_RATING_ENTRY = "tdxf10_gg_ybpj"
+RESEARCH_RATING_SUMMARY_MODULE = "tzpjtj"
+RESEARCH_REPORT_MODULE = "ycpjyjbg"
 
 COMPANY_OVERVIEW_FIELDS = {
     "name": "T003",
@@ -35,6 +38,29 @@ COMPANY_OVERVIEW_FIELDS = {
     "office_address": "T012",
     "company_profile": "T019",
     "business_scope": "T018",
+}
+
+RESEARCH_RATING_SUMMARY_FIELDS = {
+    "rating_date": "T016",
+    "raw_sj": "sj",
+    "raw_zj": "zj",
+    "raw_mr": "mr",
+    "raw_zc": "zc",
+    "raw_zx": "zx",
+    "raw_jc": "jc",
+    "raw_mc": "mc",
+    "rating_value": "pj",
+    "raw_t006": "T006",
+}
+
+RESEARCH_REPORT_FIELDS = {
+    "report_id": "T011",
+    "report_date": "sj",
+    "rating": "pj",
+    "institution": "jg",
+    "analysis_text": "ytxt",
+    "rating_score": "T004",
+    "title": "T039",
 }
 
 
@@ -74,6 +100,69 @@ def parse_company_overview(stock_code: str, data_root: Path) -> Path:
                 now_shanghai_iso(),
             ],
         )
+
+    return database_path
+
+
+def parse_research_ratings(stock_code: str, data_root: Path) -> Path:
+    valid_stock_code = validate_stock_code(stock_code)
+    data_root = Path(data_root)
+    writer = RawCacheWriter(data_root)
+    summary_paths = writer.paths(
+        entry=RESEARCH_RATING_ENTRY,
+        stock_code=valid_stock_code,
+        module=RESEARCH_RATING_SUMMARY_MODULE,
+    )
+    report_paths = writer.paths(
+        entry=RESEARCH_RATING_ENTRY,
+        stock_code=valid_stock_code,
+        module=RESEARCH_REPORT_MODULE,
+    )
+    for paths in (summary_paths, report_paths):
+        if not paths.data_path.exists():
+            raise TqlexError(f"research rating raw JSON not found: {paths.data_path}")
+
+    summary_rows = result_set_rows(read_json_object(summary_paths.data_path))
+    report_rows = result_set_rows(read_json_object(report_paths.data_path))
+    summary_metadata = (
+        read_json_object(summary_paths.meta_path)
+        if summary_paths.meta_path.exists()
+        else {}
+    )
+    report_metadata = (
+        read_json_object(report_paths.meta_path)
+        if report_paths.meta_path.exists()
+        else {}
+    )
+    database_path = data_root / "warehouse" / "research.duckdb"
+    database_path.parent.mkdir(parents=True, exist_ok=True)
+    structured_at = now_shanghai_iso()
+
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute(RESEARCH_RATING_SUMMARIES_SCHEMA)
+        connection.execute(RESEARCH_REPORTS_SCHEMA)
+        connection.execute("BEGIN")
+        try:
+            replace_research_rating_summaries(
+                connection,
+                stock_code=valid_stock_code,
+                rows=summary_rows,
+                paths=summary_paths,
+                metadata=summary_metadata,
+                structured_at=structured_at,
+            )
+            replace_research_reports(
+                connection,
+                stock_code=valid_stock_code,
+                rows=report_rows,
+                paths=report_paths,
+                metadata=report_metadata,
+                structured_at=structured_at,
+            )
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
+        connection.execute("COMMIT")
 
     return database_path
 
@@ -122,6 +211,117 @@ def company_overview_row(
     return row
 
 
+def result_set_rows(json_data: dict[str, Any]) -> list[dict[str, Any]]:
+    result_sets = json_data.get("ResultSets")
+    if not isinstance(result_sets, list) or not result_sets:
+        return []
+
+    result_set = result_sets[0]
+    if not isinstance(result_set, dict):
+        raise TqlexError("research rating result set is invalid")
+    columns = result_set.get("ColDes")
+    content = result_set.get("Content")
+    if not isinstance(columns, list) or not isinstance(content, list):
+        return []
+
+    column_names = [
+        column.get("Name") if isinstance(column, dict) else None for column in columns
+    ]
+    rows = []
+    for values in content:
+        if not isinstance(values, list):
+            raise TqlexError("research rating row is invalid")
+        rows.append(
+            {
+                name: values[index]
+                for index, name in enumerate(column_names)
+                if isinstance(name, str) and index < len(values)
+            }
+        )
+    return rows
+
+
+def replace_research_rating_summaries(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    stock_code: str,
+    rows: list[dict[str, Any]],
+    paths: Any,
+    metadata: dict[str, Any],
+    structured_at: str,
+) -> None:
+    connection.execute(
+        "DELETE FROM research_rating_summaries WHERE stock_code = ?", [stock_code]
+    )
+    if not rows:
+        return
+
+    values = []
+    for row in rows:
+        normalized = {
+            field: normalize_text(row.get(source_name))
+            for field, source_name in RESEARCH_RATING_SUMMARY_FIELDS.items()
+        }
+        values.append(
+            [
+                stock_code,
+                normalized["rating_date"],
+                *(parse_integer(normalized[field]) for field in (
+                    "raw_sj",
+                    "raw_zj",
+                    "raw_mr",
+                    "raw_zc",
+                    "raw_zx",
+                    "raw_jc",
+                    "raw_mc",
+                )),
+                parse_float(normalized["rating_value"]),
+                normalized["raw_t006"],
+                paths.data_path.as_posix(),
+                RESEARCH_RATING_ENTRY,
+                RESEARCH_RATING_SUMMARY_MODULE,
+                metadata.get("fetched_at"),
+                metadata.get("response_hash"),
+                structured_at,
+            ]
+        )
+    connection.executemany(RESEARCH_RATING_SUMMARIES_INSERT, values)
+
+
+def replace_research_reports(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    stock_code: str,
+    rows: list[dict[str, Any]],
+    paths: Any,
+    metadata: dict[str, Any],
+    structured_at: str,
+) -> None:
+    connection.execute("DELETE FROM research_reports WHERE stock_code = ?", [stock_code])
+    if not rows:
+        return
+
+    values = []
+    for row in rows:
+        normalized = {
+            field: normalize_text(row.get(source_name))
+            for field, source_name in RESEARCH_REPORT_FIELDS.items()
+        }
+        values.append(
+            [
+                stock_code,
+                *(normalized[field] for field in RESEARCH_REPORT_FIELDS),
+                paths.data_path.as_posix(),
+                RESEARCH_RATING_ENTRY,
+                RESEARCH_REPORT_MODULE,
+                metadata.get("fetched_at"),
+                metadata.get("response_hash"),
+                structured_at,
+            ]
+        )
+    connection.executemany(RESEARCH_REPORTS_INSERT, values)
+
+
 def normalize_text(value: Any) -> str | None:
     if value is None:
         return None
@@ -140,6 +340,15 @@ def parse_integer(value: str | None) -> int | None:
         return None
     try:
         return int(value.replace(",", ""))
+    except ValueError:
+        return None
+
+
+def parse_float(value: str | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value.replace(",", ""))
     except ValueError:
         return None
 
@@ -241,4 +450,68 @@ ON CONFLICT (stock_code) DO UPDATE SET
     source_fetched_at = excluded.source_fetched_at,
     source_response_hash = excluded.source_response_hash,
     structured_at = excluded.structured_at
+"""
+
+
+RESEARCH_RATING_SUMMARIES_SCHEMA = """
+CREATE TABLE IF NOT EXISTS research_rating_summaries (
+    stock_code VARCHAR NOT NULL,
+    rating_date VARCHAR,
+    raw_sj BIGINT,
+    raw_zj BIGINT,
+    raw_mr BIGINT,
+    raw_zc BIGINT,
+    raw_zx BIGINT,
+    raw_jc BIGINT,
+    raw_mc BIGINT,
+    rating_value DOUBLE,
+    raw_t006 VARCHAR,
+    source_path VARCHAR NOT NULL,
+    source_entry VARCHAR NOT NULL,
+    source_module VARCHAR NOT NULL,
+    source_fetched_at VARCHAR,
+    source_response_hash VARCHAR,
+    structured_at VARCHAR NOT NULL
+)
+"""
+
+
+RESEARCH_RATING_SUMMARIES_INSERT = """
+INSERT INTO research_rating_summaries (
+    stock_code, rating_date, raw_sj, raw_zj, raw_mr, raw_zc, raw_zx, raw_jc,
+    raw_mc, rating_value, raw_t006, source_path, source_entry, source_module,
+    source_fetched_at, source_response_hash, structured_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"""
+
+
+RESEARCH_REPORTS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS research_reports (
+    stock_code VARCHAR NOT NULL,
+    report_id VARCHAR NOT NULL,
+    report_date VARCHAR,
+    rating VARCHAR,
+    institution VARCHAR,
+    analysis_text VARCHAR,
+    rating_score VARCHAR,
+    title VARCHAR,
+    source_path VARCHAR NOT NULL,
+    source_entry VARCHAR NOT NULL,
+    source_module VARCHAR NOT NULL,
+    source_fetched_at VARCHAR,
+    source_response_hash VARCHAR,
+    structured_at VARCHAR NOT NULL,
+    PRIMARY KEY (stock_code, report_id)
+)
+"""
+
+
+RESEARCH_REPORTS_INSERT = """
+INSERT INTO research_reports (
+    stock_code, report_id, report_date, rating, institution, analysis_text,
+    rating_score, title, source_path, source_entry, source_module,
+    source_fetched_at, source_response_hash, structured_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """

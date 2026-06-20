@@ -7,6 +7,7 @@ import duckdb
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+import zxtp.structured as structured
 from zxtp.structured import parse_company_overview
 from zxtp.tqlex import RawCacheWriter
 
@@ -134,6 +135,142 @@ class CompanyOverviewStructuredTests(unittest.TestCase):
                     "tdxf10_gg_gsgk",
                     "gsgk",
                 ),
+            )
+
+
+class ResearchRatingStructuredTests(unittest.TestCase):
+    def test_parses_rating_summary_and_reports_into_duckdb(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            self.assertTrue(hasattr(structured, "parse_research_ratings"))
+            writer = RawCacheWriter(data_root)
+            writer.write(
+                entry="tdxf10_gg_ybpj",
+                params=["002736", "tzpjtj"],
+                stock_code="002736",
+                module="tzpjtj",
+                source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_ybpj",
+                json_data={
+                    "ErrorCode": 0,
+                    "ResultSets": [
+                        {
+                            "ColDes": [
+                                {"Name": "T016"},
+                                {"Name": "sj"},
+                                {"Name": "zj"},
+                                {"Name": "mr"},
+                                {"Name": "zc"},
+                                {"Name": "zx"},
+                                {"Name": "jc"},
+                                {"Name": "mc"},
+                                {"Name": "pj"},
+                                {"Name": "T006"},
+                            ],
+                            "Content": [
+                                [
+                                    "20260527",
+                                    "30",
+                                    "1",
+                                    "20",
+                                    "4",
+                                    "3",
+                                    "1",
+                                    "1",
+                                    "4.50",
+                                    "sample",
+                                ]
+                            ],
+                        }
+                    ],
+                },
+            )
+            writer.write(
+                entry="tdxf10_gg_ybpj",
+                params=["002736", "ycpjyjbg"],
+                stock_code="002736",
+                module="ycpjyjbg",
+                source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_ybpj",
+                json_data={
+                    "ErrorCode": 0,
+                    "ResultSets": [
+                        {
+                            "ColDes": [
+                                {"Name": "T011"},
+                                {"Name": "sj"},
+                                {"Name": "pj"},
+                                {"Name": "jg"},
+                                {"Name": "ytxt"},
+                                {"Name": "T004"},
+                                {"Name": "T039"},
+                            ],
+                            "Content": [
+                                [
+                                    "report-1",
+                                    "20260527",
+                                    "Buy",
+                                    "Example Securities",
+                                    "First report analysis",
+                                    "5",
+                                    "First report title",
+                                ],
+                                [
+                                    "report-2",
+                                    "20260526",
+                                    "Hold",
+                                    "Another Securities",
+                                    "Second report analysis",
+                                    "3",
+                                    "Second report title",
+                                ],
+                            ],
+                        }
+                    ],
+                },
+            )
+
+            database_path = structured.parse_research_ratings("002736", data_root)
+
+            self.assertEqual(database_path, data_root / "warehouse" / "research.duckdb")
+            with duckdb.connect(str(database_path), read_only=True) as connection:
+                summary = connection.execute(
+                    """
+                    SELECT
+                        stock_code,
+                        rating_date,
+                        raw_sj,
+                        raw_mr,
+                        rating_value,
+                        source_module
+                    FROM research_rating_summaries
+                    """
+                ).fetchone()
+                reports = connection.execute(
+                    """
+                    SELECT report_id, report_date, rating, institution, title
+                    FROM research_reports
+                    ORDER BY report_id
+                    """
+                ).fetchall()
+
+            self.assertEqual(summary, ("002736", "20260527", 30, 20, 4.5, "tzpjtj"))
+            self.assertEqual(
+                reports,
+                [
+                    (
+                        "report-1",
+                        "20260527",
+                        "Buy",
+                        "Example Securities",
+                        "First report title",
+                    ),
+                    (
+                        "report-2",
+                        "20260526",
+                        "Hold",
+                        "Another Securities",
+                        "Second report title",
+                    ),
+                ],
             )
 
 

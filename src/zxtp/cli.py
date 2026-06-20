@@ -9,7 +9,7 @@ from typing import Any, Callable, Iterator, Sequence, TextIO
 
 from .ai_context import generate_full_context
 from .config import resolve_data_root
-from .structured import parse_company_overview
+from .structured import parse_company_overview, parse_research_ratings
 from .tqlex import (
     RawCacheWriter,
     TqlexClient,
@@ -748,6 +748,11 @@ def run_fetch_all(stock_code: str, data_root: Path, output_stream: TextIO) -> Pa
     print("开始下载研报评级 ybpj...", file=output_stream)
     for data_path in fetch_ybpj(valid_stock_code, data_root):
         print(f"saved ybpj raw JSON: {data_path}", file=output_stream)
+    database_path = parse_research_ratings(valid_stock_code, data_root)
+    print(
+        f"saved research rating structured data: {database_path}",
+        file=output_stream,
+    )
 
     print("开始下载财务分析 cwfx...", file=output_stream)
     for data_path in fetch_cwfx(valid_stock_code, data_root):
@@ -849,6 +854,11 @@ def run_ui(
                 print("开始下载研报评级 ybpj...", file=output_stream)
                 for data_path in fetch_ybpj(stock_code, data_root):
                     print(f"saved ybpj raw JSON: {data_path}", file=output_stream)
+                database_path = parse_research_ratings(stock_code, data_root)
+                print(
+                    f"saved research rating structured data: {database_path}",
+                    file=output_stream,
+                )
                 return 0
 
             if module == "3":
@@ -922,6 +932,11 @@ def main(
             if args.command == "fetch-ybpj":
                 for data_path in fetch_ybpj(args.stock_code, data_root):
                     print(f"saved ybpj raw JSON: {data_path}", file=output_stream)
+                database_path = parse_research_ratings(args.stock_code, data_root)
+                print(
+                    f"saved research rating structured data: {database_path}",
+                    file=output_stream,
+                )
                 return 0
             if args.command == "fetch-cwfx":
                 for data_path in fetch_cwfx(args.stock_code, data_root):

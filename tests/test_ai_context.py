@@ -6,11 +6,118 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from zxtp.ai_context import generate_full_context
-from zxtp.structured import parse_company_overview
+from zxtp.structured import parse_company_overview, parse_research_ratings
 from zxtp.tqlex import RawCacheWriter
 
 
 class AiContextGenerationTests(unittest.TestCase):
+    def test_includes_structured_research_ratings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            writer = RawCacheWriter(data_root)
+            writer.write(
+                entry="tdxf10_gg_ybpj",
+                params=["002736", "tzpjtj"],
+                stock_code="002736",
+                module="tzpjtj",
+                source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_ybpj",
+                json_data={
+                    "ErrorCode": 0,
+                    "ResultSets": [
+                        {
+                            "ColDes": [
+                                {"Name": "T016"},
+                                {"Name": "sj"},
+                                {"Name": "zj"},
+                                {"Name": "mr"},
+                                {"Name": "zc"},
+                                {"Name": "zx"},
+                                {"Name": "jc"},
+                                {"Name": "mc"},
+                                {"Name": "pj"},
+                                {"Name": "T006"},
+                            ],
+                            "Content": [
+                                [
+                                    "20260527",
+                                    "30",
+                                    "1",
+                                    "20",
+                                    "4",
+                                    "3",
+                                    "1",
+                                    "1",
+                                    "4.50",
+                                    None,
+                                ]
+                            ],
+                        }
+                    ],
+                },
+            )
+            writer.write(
+                entry="tdxf10_gg_ybpj",
+                params=["002736", "ycpjyjbg"],
+                stock_code="002736",
+                module="ycpjyjbg",
+                source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_ybpj",
+                json_data={
+                    "ErrorCode": 0,
+                    "ResultSets": [
+                        {
+                            "ColDes": [
+                                {"Name": "T011"},
+                                {"Name": "sj"},
+                                {"Name": "pj"},
+                                {"Name": "jg"},
+                                {"Name": "ytxt"},
+                                {"Name": "T004"},
+                                {"Name": "T039"},
+                            ],
+                            "Content": [
+                                [
+                                    "report-new",
+                                    "20260527",
+                                    "Buy",
+                                    "Example Securities",
+                                    "New report analysis",
+                                    "5",
+                                    "Newest report title",
+                                ],
+                                [
+                                    "report-old",
+                                    "20260520",
+                                    "Hold",
+                                    "Another Securities",
+                                    "Old report analysis",
+                                    "3",
+                                    "Older report title",
+                                ],
+                            ],
+                        }
+                    ],
+                },
+            )
+            parse_research_ratings("002736", data_root)
+
+            output_path = generate_full_context("002736", data_root)
+
+            text = output_path.read_text(encoding="utf-8")
+            research_section = text.split("## 6. 研报评级", 1)[1].split(
+                "## 7. 行业分析", 1
+            )[0]
+            self.assertIn("20260527", research_section)
+            self.assertIn("30", research_section)
+            self.assertIn("原始字段：raw_sj=30", research_section)
+            self.assertIn("Newest report title", research_section)
+            self.assertIn("Example Securities", research_section)
+            self.assertIn("Buy", research_section)
+            self.assertLess(
+                research_section.index("Newest report title"),
+                research_section.index("Older report title"),
+            )
+            self.assertNotIn("暂无结构化摘要", research_section)
+
     def test_includes_structured_company_overview(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             data_root = Path(tmp)

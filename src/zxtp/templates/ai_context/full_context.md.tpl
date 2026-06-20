@@ -68,7 +68,7 @@ data_version: 1
 
 ## 6. 研报评级
 
-暂无结构化摘要。后续 parser 完成后，本节用于展示评级统计、盈利预测、研报标题和机构观点。
+{research_ratings}
 
 ### Raw 来源
 
