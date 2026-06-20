@@ -70,6 +70,17 @@ RESEARCH_RATING_COUNT_FIELDS = (
     "raw_mc",
 )
 
+FINANCIAL_CONTEXT_METRICS = (
+    ("basic_earnings_per_share", "基本每股收益（元）", 3),
+    ("total_profit", "利润总额（亿元）", 2),
+    ("net_profit", "净利润（亿元）", 2),
+    ("return_on_equity_pct", "净资产收益率（%）", 2),
+    ("gross_margin_pct", "销售毛利率（%）", 2),
+    ("revenue_yoy_pct", "营业收入同比（%）", 2),
+    ("net_profit_yoy_pct", "净利润同比（%）", 2),
+    ("cash_flow_per_share", "每股经营现金流（元）", 3),
+)
+
 FINANCIAL_ANALYSIS_SOURCES = (
     RawSource("公司类型", "tdxf10_gg_cwfx", "gptype"),
     RawSource("财务诊断", "tdxf10_gg_cwfx", "cwzd"),
@@ -171,6 +182,7 @@ def generate_full_context(stock_code: str, data_root: Path) -> Path:
     financial_statuses = source_statuses(
         data_root, valid_stock_code, FINANCIAL_ANALYSIS_SOURCES
     )
+    financial_analysis = render_financial_analysis(data_root, valid_stock_code)
     business_statuses = source_statuses(
         data_root, valid_stock_code, BUSINESS_ANALYSIS_SOURCES
     )
@@ -206,6 +218,7 @@ def generate_full_context(stock_code: str, data_root: Path) -> Path:
             "coverage_summary": coverage_summary(all_statuses),
             "company_overview": company_overview,
             "company_overview_sources": render_sources(company_statuses),
+            "financial_analysis": financial_analysis,
             "financial_analysis_sources": render_sources(financial_statuses),
             "business_analysis_sources": render_sources(business_statuses),
             "dividend_financing_sources": render_sources(dividend_statuses),
@@ -223,6 +236,88 @@ def generate_full_context(stock_code: str, data_root: Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(rendered, encoding="utf-8")
     return output_path
+
+
+def render_financial_analysis(data_root: Path, stock_code: str) -> str:
+    database_path = data_root / "warehouse" / "financial.duckdb"
+    if not database_path.exists():
+        return "暂无结构化财务分析。请先下载财务分析数据。"
+
+    try:
+        with duckdb.connect(str(database_path), read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT report_date, report_type, metric_name, metric_value, metric_unit
+                FROM financial_key_metrics
+                WHERE stock_code = ?
+                """,
+                [stock_code],
+            ).fetchall()
+    except duckdb.Error:
+        return (
+            "结构化财务分析暂不可读取；DuckDB 数据库可能正被其他程序占用，"
+            "或尚未生成相关数据表。请断开 DBeaver 连接后重新生成 AI Context。"
+        )
+
+    periods = financial_context_periods(rows)
+    if not periods:
+        return "暂无结构化财务分析。请先下载财务分析数据。"
+
+    period_types = {row[0]: row[1] for row in rows}
+    labels = [
+        f"{date[:4]} 年报" if period_types.get(date) == "annual" else date
+        for date in periods
+    ]
+    lines = [
+        "### 报告期说明",
+        "- 展示最近三个完整年度和最新报告期；金额均来自已确认的主要指标字段。",
+        "- 利润表、资产负债表和现金流量表已按原始字段结构化，未确认字段不作会计科目解释。",
+        "",
+        *render_financial_metric_table(rows, periods, labels),
+        "",
+        "### 资产与负债",
+        "- 资产负债表明细已结构化为 raw 字段级事实；字段业务口径待确认，暂不展示猜测的金额。",
+        "",
+        "### 现金流与效率",
+        "- 现金流量表明细已结构化为 raw 字段级事实；已确认的每股经营现金流见上表。",
+    ]
+    return "\n".join(lines)
+
+
+def financial_context_periods(rows: list[tuple[Any, ...]]) -> list[str]:
+    annual_dates = sorted(
+        {row[0] for row in rows if row[1] == "annual" and row[0] is not None}
+    )[-3:]
+    all_dates = [row[0] for row in rows if row[0] is not None]
+    latest_date = max(all_dates) if all_dates else None
+    return sorted(set(annual_dates) | ({latest_date} if latest_date else set()))
+
+
+def render_financial_metric_table(
+    rows: list[tuple[Any, ...]], periods: list[str], labels: list[str]
+) -> list[str]:
+    values = {(row[0], row[2]): row[3] for row in rows}
+    lines = [
+        "### 经营成果与关键指标",
+        "| 指标 | " + " | ".join(labels) + " |",
+        "| --- | " + " | ".join("---:" for _ in labels) + " |",
+    ]
+    for metric_name, label, decimal_places in FINANCIAL_CONTEXT_METRICS:
+        metric_values = [values.get((period, metric_name)) for period in periods]
+        if not any(value is not None for value in metric_values):
+            continue
+        if metric_name in {"total_profit", "net_profit"}:
+            formatted_values = [
+                "—" if value is None else f"{float(value) / 100_000_000:.{decimal_places}f}"
+                for value in metric_values
+            ]
+        else:
+            formatted_values = [
+                "—" if value is None else f"{float(value):.{decimal_places}f}"
+                for value in metric_values
+            ]
+        lines.append("| " + label + " | " + " | ".join(formatted_values) + " |")
+    return lines
 
 
 def render_company_overview(data_root: Path, stock_code: str) -> str:

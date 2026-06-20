@@ -9,7 +9,11 @@ from typing import Any, Callable, Iterator, Sequence, TextIO
 
 from .ai_context import generate_full_context
 from .config import resolve_data_root
-from .structured import parse_company_overview, parse_research_ratings
+from .structured import (
+    parse_company_overview,
+    parse_financial_analysis,
+    parse_research_ratings,
+)
 from .tqlex import (
     RawCacheWriter,
     TqlexClient,
@@ -757,6 +761,11 @@ def run_fetch_all(stock_code: str, data_root: Path, output_stream: TextIO) -> Pa
     print("开始下载财务分析 cwfx...", file=output_stream)
     for data_path in fetch_cwfx(valid_stock_code, data_root):
         print(f"saved cwfx raw JSON: {data_path}", file=output_stream)
+    database_path = parse_financial_analysis(valid_stock_code, data_root)
+    print(
+        f"saved financial analysis structured data: {database_path}",
+        file=output_stream,
+    )
 
     print("开始下载经营分析 jyfx...", file=output_stream)
     for data_path in fetch_jyfx(valid_stock_code, data_root):
@@ -866,6 +875,11 @@ def run_ui(
                 print("开始下载财务分析 cwfx...", file=output_stream)
                 for data_path in fetch_cwfx(stock_code, data_root):
                     print(f"saved cwfx raw JSON: {data_path}", file=output_stream)
+                database_path = parse_financial_analysis(stock_code, data_root)
+                print(
+                    f"saved financial analysis structured data: {database_path}",
+                    file=output_stream,
+                )
                 return 0
 
             if module == "4":
@@ -941,6 +955,11 @@ def main(
             if args.command == "fetch-cwfx":
                 for data_path in fetch_cwfx(args.stock_code, data_root):
                     print(f"saved cwfx raw JSON: {data_path}", file=output_stream)
+                database_path = parse_financial_analysis(args.stock_code, data_root)
+                print(
+                    f"saved financial analysis structured data: {database_path}",
+                    file=output_stream,
+                )
                 return 0
             if args.command == "fetch-hyfx":
                 for data_path in fetch_hyfx(args.stock_code, data_root):

@@ -644,5 +644,171 @@ class ResearchRatingStructuredTests(unittest.TestCase):
             )
 
 
+class FinancialAnalysisStructuredTests(unittest.TestCase):
+    def write_financial_raw(
+        self,
+        data_root: Path,
+        module: str,
+        columns: list[str],
+        rows: list[list[str | None]],
+    ) -> None:
+        RawCacheWriter(data_root).write(
+            entry="tdxf10_gg_cwfx",
+            params=["002736", module, ""],
+            stock_code="002736",
+            module=module,
+            source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_cwfx",
+            json_data={
+                "ErrorCode": 0,
+                "ResultSets": [
+                    {
+                        "ColDes": [{"Name": column} for column in columns],
+                        "Content": rows,
+                    }
+                ],
+            },
+        )
+
+    def write_core_financial_raw(self, data_root: Path, eps: str = "1.000") -> None:
+        self.write_financial_raw(
+            data_root,
+            "zyzb",
+            ["rq", "mgsy", "kfjlr", "mgxjll", "lrze", "jyr", "jzzsyl", "xsmll", "yysrtb", "jlrtbzzl"],
+            [
+                ["2025-12-31", eps, "900000000", "0.500", "1200000000", "1000000000", "10.5", "30.0", "5.0", "8.0"],
+                ["2026-03-31", "0.250", "250000000", "0.125", "300000000", "250000000", "2.5", "28.0", "4.0", "6.0"],
+            ],
+        )
+        for module, columns in (
+            ("lyb", ["rq", "T008"]),
+            ("zcfzb", ["rq", "T008"]),
+            ("xjllb", ["rq", "T013"]),
+        ):
+            self.write_financial_raw(
+                data_root,
+                module,
+                columns,
+                [["2025-12-31", "1200000000"], ["2026-03-31", "300000000"]],
+            )
+
+    def test_parses_core_financial_raw_into_duckdb(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            self.write_core_financial_raw(data_root)
+
+            database_path = structured.parse_financial_analysis("002736", data_root)
+
+            self.assertEqual(database_path, data_root / "warehouse" / "financial.duckdb")
+            with duckdb.connect(str(database_path), read_only=True) as connection:
+                tables = {
+                    row[0]
+                    for row in connection.execute("SHOW TABLES").fetchall()
+                }
+                key_metric = connection.execute(
+                    """
+                    SELECT report_date, metric_name, metric_value, metric_unit, raw_field_name
+                    FROM financial_key_metrics
+                    WHERE metric_name = 'return_on_equity_pct'
+                    """
+                ).fetchone()
+                income_item = connection.execute(
+                    """
+                    SELECT report_date, raw_field_name, amount
+                    FROM financial_income_statements
+                    WHERE report_date = '2025-12-31' AND raw_field_name = 'T008'
+                    """
+                ).fetchone()
+                periods = connection.execute(
+                    """
+                    SELECT report_date, report_year, report_type
+                    FROM financial_key_metrics
+                    WHERE metric_name = 'basic_earnings_per_share'
+                    ORDER BY report_date
+                    """
+                ).fetchall()
+
+            self.assertEqual(
+                tables,
+                {
+                    "financial_balance_sheets",
+                    "financial_cash_flows",
+                    "financial_income_statements",
+                    "financial_key_metrics",
+                },
+            )
+            self.assertEqual(
+                key_metric,
+                ("2025-12-31", "return_on_equity_pct", 10.5, "%", "jzzsyl"),
+            )
+            self.assertEqual(income_item, ("2025-12-31", "T008", 1200000000.0))
+            self.assertEqual(
+                periods,
+                [("2025-12-31", 2025, "annual"), ("2026-03-31", 2026, "q1")],
+            )
+
+    def test_replaces_financial_rows_for_the_same_stock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            self.write_core_financial_raw(data_root, eps="1.000")
+            structured.parse_financial_analysis("002736", data_root)
+            self.write_core_financial_raw(data_root, eps="2.000")
+
+            database_path = structured.parse_financial_analysis("002736", data_root)
+
+            with duckdb.connect(str(database_path), read_only=True) as connection:
+                rows = connection.execute(
+                    """
+                    SELECT metric_value
+                    FROM financial_key_metrics
+                    WHERE report_date = '2025-12-31'
+                      AND metric_name = 'basic_earnings_per_share'
+                    """
+                ).fetchall()
+            self.assertEqual(rows, [(2.0,)])
+
+    def test_creates_empty_tables_when_cwfx_raw_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+
+            database_path = structured.parse_financial_analysis("002736", data_root)
+
+            with duckdb.connect(str(database_path), read_only=True) as connection:
+                counts = connection.execute(
+                    """
+                    SELECT
+                        (SELECT count(*) FROM financial_income_statements),
+                        (SELECT count(*) FROM financial_balance_sheets),
+                        (SELECT count(*) FROM financial_cash_flows),
+                        (SELECT count(*) FROM financial_key_metrics)
+                    """
+                ).fetchone()
+            self.assertEqual(counts, (0, 0, 0, 0))
+
+    def test_skips_invalid_snapshot_and_preserves_other_modules(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            self.write_core_financial_raw(data_root)
+            RawCacheWriter(data_root).paths(
+                entry="tdxf10_gg_cwfx", stock_code="002736", module="lyb"
+            ).data_path.write_text("{not-json", encoding="utf-8")
+
+            database_path = structured.parse_financial_analysis("002736", data_root)
+
+            with duckdb.connect(str(database_path), read_only=True) as connection:
+                counts = connection.execute(
+                    """
+                    SELECT
+                        (SELECT count(*) FROM financial_income_statements),
+                        (SELECT count(*) FROM financial_balance_sheets),
+                        (SELECT count(*) FROM financial_cash_flows),
+                        (SELECT count(*) FROM financial_key_metrics)
+                    """
+                ).fetchone()
+            self.assertEqual(counts[0], 0)
+            self.assertGreater(counts[1], 0)
+            self.assertGreater(counts[2], 0)
+            self.assertGreater(counts[3], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

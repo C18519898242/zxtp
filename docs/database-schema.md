@@ -184,6 +184,39 @@ company_overviews.stock_code
     = daily_close_prices.stock_code
 ```
 
+## `financial_*`：核心财务分析
+
+财务分析数据写入独立的 `<data-root>/warehouse/financial.duckdb`。重新解析同一股票时，程序会以该股票最新的 raw snapshot 替换旧记录。
+
+| 表名 | 一行代表什么 | 来源 |
+| --- | --- | --- |
+| `financial_income_statements` | 一个报告期的利润表原始字段 | `cwfx/lyb` |
+| `financial_balance_sheets` | 一个报告期的资产负债表原始字段 | `cwfx/zcfzb` |
+| `financial_cash_flows` | 一个报告期的现金流量表原始字段 | `cwfx/xjllb` |
+| `financial_key_metrics` | 一个报告期的一项已确认主要指标 | `cwfx/zyzb` |
+
+前三张表的共同粒度是 `stock_code + report_date + raw_field_name`。`raw_field_name` 是 TQLEX 原始字段标识，不代表已确认的会计科目；金额以元存储。共同的 `report_year`、`report_type`、`source_*` 和 `structured_at` 列用于筛选报告期及追溯 raw snapshot，`statement_scope` 当前固定为 `unknown`。
+
+`financial_key_metrics` 的 `metric_name`、原始字段和单位如下：
+
+| metric_name | 原始字段 | 单位 |
+| --- | --- | --- |
+| `basic_earnings_per_share` | `mgsy` | yuan |
+| `net_profit_excluding_non_recurring` | `kfjlr` | yuan |
+| `cash_flow_per_share` | `mgxjll` | yuan |
+| `total_profit` | `lrze` | yuan |
+| `net_profit` | `jyr` | yuan |
+| `return_on_equity_pct` | `jzzsyl` | % |
+| `gross_margin_pct` | `xsmll` | % |
+| `net_profit_yoy_pct` | `jlrtbzzl` | % |
+| `revenue_yoy_pct` | `yysrtb` | % |
+| `revenue_ytd_yoy_pct` | `yyzsrhb` | % |
+| `net_profit_ytd_yoy_pct` | `jlrhb` | % |
+| `average_return_on_equity_pct` | `pjjzcsyl` | % |
+| `net_profit_excluding_non_recurring_ytd_yoy_pct` | `kfjlrhb` | % |
+
+AI Context 默认展示最近三个完整年度和最新报告期。展示时仅将 `total_profit` 与 `net_profit` 从元换算为亿元；其他数值沿用源单位。未确认口径的三表字段不在 AI Context 中解释为标准会计项目。
+
 常见查看顺序：先打开 `company_overviews` 了解公司，再在 `research_reports` 按日期查看最近机构观点；`research_rating_summaries` 作为评级统计的原始数据补充；需要核对预测来源时，再查看 `earnings_forecast_*` 和 `performance_*` 表；查看近期价格时使用 `daily_close_prices`。
 
 ## 后续会新增的表

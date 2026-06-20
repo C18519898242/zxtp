@@ -271,11 +271,15 @@ class CliFetchCwfxTests(unittest.TestCase):
             )
             stdout = io.StringIO()
 
-            with patch("zxtp.cli.TqlexClient", return_value=fake_client):
+            with (
+                patch("zxtp.cli.TqlexClient", return_value=fake_client),
+                patch("zxtp.cli.parse_financial_analysis") as parse_financial_analysis,
+            ):
                 with redirect_stdout(stdout):
                     exit_code = main(["fetch-cwfx", "002736", "--data-root", tmp])
 
             self.assertEqual(exit_code, 0)
+            parse_financial_analysis.assert_called_once_with("002736", Path(tmp))
             cwfx_modules = [
                 "gptype",
                 "cwzd",
@@ -311,6 +315,7 @@ class CliFetchCwfxTests(unittest.TestCase):
             self.assertEqual(fake_client.call.call_args_list, expected_calls)
             output = stdout.getvalue()
             self.assertIn("saved cwfx raw JSON", output)
+            self.assertIn("saved financial analysis structured data:", output)
             self.assertIn("tdxf10_gg_cwfx_cbdp", output)
 
             expected_paths = [
@@ -807,11 +812,15 @@ class CliFetchAllTests(unittest.TestCase):
             fake_client.call.side_effect = fake_call
             stdout = io.StringIO()
 
-            with patch("zxtp.cli.TqlexClient", return_value=fake_client):
+            with (
+                patch("zxtp.cli.TqlexClient", return_value=fake_client),
+                patch("zxtp.cli.parse_financial_analysis") as parse_financial_analysis,
+            ):
                 with redirect_stdout(stdout):
                     exit_code = main(["fetch-all", "002736", "--data-root", tmp])
 
             self.assertEqual(exit_code, 0)
+            parse_financial_analysis.assert_called_once_with("002736", Path(tmp))
             fake_client.call.assert_any_call("tdxf10_gg_gsgk", ["0", "002736", ""])
             fake_client.call.assert_any_call("tdxf10_gg_ybpj", ["002736", "tzpjtj"])
             fake_client.call.assert_any_call("tdxf10_gg_cwfx", ["002736", "gptype", ""])
@@ -967,7 +976,10 @@ class CliUiCwfxTests(unittest.TestCase):
             inputs = iter(["1", "3", "002736"])
             stdout = io.StringIO()
 
-            with patch("zxtp.cli.TqlexClient", return_value=fake_client):
+            with (
+                patch("zxtp.cli.TqlexClient", return_value=fake_client),
+                patch("zxtp.cli.parse_financial_analysis") as parse_financial_analysis,
+            ):
                 exit_code = main(
                     ["ui", "--data-root", tmp],
                     input_func=lambda prompt="": next(inputs),
@@ -975,11 +987,13 @@ class CliUiCwfxTests(unittest.TestCase):
                 )
 
             self.assertEqual(exit_code, 0)
+            parse_financial_analysis.assert_called_once_with("002736", Path(tmp))
             fake_client.call.assert_any_call("tdxf10_gg_cwfx", ["002736", "gptype", ""])
             fake_client.call.assert_any_call("tdxf10_gg_comreq", ["bdsm", "002736"])
             output = stdout.getvalue()
             self.assertIn("cwfx", output)
             self.assertIn("saved cwfx raw JSON", output)
+            self.assertIn("saved financial analysis structured data:", output)
 
 
 class CliUiHyfxTests(unittest.TestCase):

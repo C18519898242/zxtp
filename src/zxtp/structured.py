@@ -16,6 +16,27 @@ RESEARCH_RATING_SUMMARY_MODULE = "tzpjtj"
 RESEARCH_REPORT_MODULE = "ycpjyjbg"
 EARNINGS_FORECAST_MODULE = "ylyctj"
 PERFORMANCE_EXPECTATION_MODULE = "yzyq"
+FINANCIAL_ANALYSIS_ENTRY = "tdxf10_gg_cwfx"
+FINANCIAL_INCOME_STATEMENT_MODULE = "lyb"
+FINANCIAL_BALANCE_SHEET_MODULE = "zcfzb"
+FINANCIAL_CASH_FLOW_MODULE = "xjllb"
+FINANCIAL_KEY_METRICS_MODULE = "zyzb"
+
+FINANCIAL_KEY_METRIC_FIELDS = {
+    "basic_earnings_per_share": ("mgsy", "yuan"),
+    "net_profit_excluding_non_recurring": ("kfjlr", "yuan"),
+    "cash_flow_per_share": ("mgxjll", "yuan"),
+    "total_profit": ("lrze", "yuan"),
+    "net_profit": ("jyr", "yuan"),
+    "return_on_equity_pct": ("jzzsyl", "%"),
+    "gross_margin_pct": ("xsmll", "%"),
+    "net_profit_yoy_pct": ("jlrtbzzl", "%"),
+    "revenue_yoy_pct": ("yysrtb", "%"),
+    "revenue_ytd_yoy_pct": ("yyzsrhb", "%"),
+    "net_profit_ytd_yoy_pct": ("jlrhb", "%"),
+    "average_return_on_equity_pct": ("pjjzcsyl", "%"),
+    "net_profit_excluding_non_recurring_ytd_yoy_pct": ("kfjlrhb", "%"),
+}
 
 COMPANY_OVERVIEW_FIELDS = {
     "name": "T003",
@@ -325,6 +346,196 @@ def parse_research_ratings(stock_code: str, data_root: Path) -> Path:
         connection.execute("COMMIT")
 
     return database_path
+
+
+def parse_financial_analysis(stock_code: str, data_root: Path) -> Path:
+    valid_stock_code = validate_stock_code(stock_code)
+    data_root = Path(data_root)
+    writer = RawCacheWriter(data_root)
+    sources = (
+        (
+            "financial_income_statements",
+            FINANCIAL_INCOME_STATEMENT_MODULE,
+            FINANCIAL_INCOME_STATEMENTS_SCHEMA,
+        ),
+        (
+            "financial_balance_sheets",
+            FINANCIAL_BALANCE_SHEET_MODULE,
+            FINANCIAL_BALANCE_SHEETS_SCHEMA,
+        ),
+        (
+            "financial_cash_flows",
+            FINANCIAL_CASH_FLOW_MODULE,
+            FINANCIAL_CASH_FLOWS_SCHEMA,
+        ),
+    )
+    database_path = data_root / "warehouse" / "financial.duckdb"
+    database_path.parent.mkdir(parents=True, exist_ok=True)
+    structured_at = now_shanghai_iso()
+
+    with duckdb.connect(str(database_path)) as connection:
+        for _, _, schema in sources:
+            connection.execute(schema)
+        connection.execute(FINANCIAL_KEY_METRICS_SCHEMA)
+        connection.execute("BEGIN")
+        try:
+            for table_name, module, _ in sources:
+                paths = writer.paths(
+                    entry=FINANCIAL_ANALYSIS_ENTRY,
+                    stock_code=valid_stock_code,
+                    module=module,
+                )
+                replace_financial_statement(
+                    connection,
+                    table_name=table_name,
+                    stock_code=valid_stock_code,
+                    source_module=module,
+                    rows=read_optional_result_set_rows(paths),
+                    paths=paths,
+                    metadata=read_optional_json_object(paths.meta_path),
+                    structured_at=structured_at,
+                )
+
+            paths = writer.paths(
+                entry=FINANCIAL_ANALYSIS_ENTRY,
+                stock_code=valid_stock_code,
+                module=FINANCIAL_KEY_METRICS_MODULE,
+            )
+            replace_financial_key_metrics(
+                connection,
+                stock_code=valid_stock_code,
+                rows=read_optional_result_set_rows(paths),
+                paths=paths,
+                metadata=read_optional_json_object(paths.meta_path),
+                structured_at=structured_at,
+            )
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
+        connection.execute("COMMIT")
+
+    return database_path
+
+
+def read_optional_json_object(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        return read_json_object(path)
+    except TqlexError:
+        return {}
+
+
+def read_optional_result_set_rows(paths: Any) -> list[dict[str, Any]]:
+    if not paths.data_path.exists():
+        return []
+    try:
+        return result_set_rows(read_json_object(paths.data_path))
+    except TqlexError:
+        return []
+
+
+def replace_financial_statement(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    table_name: str,
+    stock_code: str,
+    source_module: str,
+    rows: list[dict[str, Any]],
+    paths: Any,
+    metadata: dict[str, Any],
+    structured_at: str,
+) -> None:
+    connection.execute(f"DELETE FROM {table_name} WHERE stock_code = ?", [stock_code])
+    values = []
+    for row in rows:
+        report_date = normalize_text(row.get("rq"))
+        if report_date is None:
+            continue
+        report_year, report_type = financial_report_period(report_date)
+        for raw_field_name, raw_value in row.items():
+            if raw_field_name == "rq":
+                continue
+            values.append(
+                [
+                    stock_code,
+                    report_date,
+                    report_year,
+                    report_type,
+                    "unknown",
+                    raw_field_name,
+                    parse_float(normalize_text(raw_value)),
+                    paths.data_path.as_posix(),
+                    FINANCIAL_ANALYSIS_ENTRY,
+                    source_module,
+                    metadata.get("fetched_at"),
+                    metadata.get("response_hash"),
+                    structured_at,
+                ]
+            )
+    if values:
+        connection.executemany(
+            f"INSERT INTO {table_name} VALUES ({', '.join('?' for _ in values[0])})",
+            values,
+        )
+
+
+def replace_financial_key_metrics(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    stock_code: str,
+    rows: list[dict[str, Any]],
+    paths: Any,
+    metadata: dict[str, Any],
+    structured_at: str,
+) -> None:
+    connection.execute("DELETE FROM financial_key_metrics WHERE stock_code = ?", [stock_code])
+    values = []
+    for row in rows:
+        report_date = normalize_text(row.get("rq"))
+        if report_date is None:
+            continue
+        report_year, report_type = financial_report_period(report_date)
+        for metric_name, (raw_field_name, metric_unit) in FINANCIAL_KEY_METRIC_FIELDS.items():
+            metric_value = parse_float(normalize_text(row.get(raw_field_name)))
+            if metric_value is None:
+                continue
+            values.append(
+                [
+                    stock_code,
+                    report_date,
+                    report_year,
+                    report_type,
+                    metric_name,
+                    metric_value,
+                    metric_unit,
+                    raw_field_name,
+                    paths.data_path.as_posix(),
+                    FINANCIAL_ANALYSIS_ENTRY,
+                    FINANCIAL_KEY_METRICS_MODULE,
+                    metadata.get("fetched_at"),
+                    metadata.get("response_hash"),
+                    structured_at,
+                ]
+            )
+    if values:
+        connection.executemany(
+            f"INSERT INTO financial_key_metrics VALUES ({', '.join('?' for _ in values[0])})",
+            values,
+        )
+
+
+def financial_report_period(report_date: str | None) -> tuple[int | None, str]:
+    if report_date is None:
+        return None, "unknown"
+    report_year = parse_integer(report_date[:4]) if len(report_date) >= 4 else None
+    period_types = {
+        "03-31": "q1",
+        "06-30": "semiannual",
+        "09-30": "q3",
+        "12-31": "annual",
+    }
+    return report_year, period_types.get(report_date[-5:], "unknown")
 
 
 def read_json_object(path: Path) -> dict[str, Any]:
@@ -1148,5 +1359,59 @@ CREATE TABLE IF NOT EXISTS daily_close_prices (
     source_response_hash VARCHAR,
     structured_at VARCHAR NOT NULL,
     PRIMARY KEY (stock_code, trading_day)
+)
+"""
+
+
+FINANCIAL_STATEMENT_SCHEMA_COLUMNS = """
+    stock_code VARCHAR NOT NULL,
+    report_date VARCHAR NOT NULL,
+    report_year INTEGER,
+    report_type VARCHAR NOT NULL,
+    statement_scope VARCHAR NOT NULL,
+    raw_field_name VARCHAR NOT NULL,
+    amount DOUBLE,
+    source_path VARCHAR NOT NULL,
+    source_entry VARCHAR NOT NULL,
+    source_module VARCHAR NOT NULL,
+    source_fetched_at VARCHAR,
+    source_response_hash VARCHAR,
+    structured_at VARCHAR NOT NULL
+"""
+
+FINANCIAL_INCOME_STATEMENTS_SCHEMA = f"""
+CREATE TABLE IF NOT EXISTS financial_income_statements (
+{FINANCIAL_STATEMENT_SCHEMA_COLUMNS}
+)
+"""
+
+FINANCIAL_BALANCE_SHEETS_SCHEMA = f"""
+CREATE TABLE IF NOT EXISTS financial_balance_sheets (
+{FINANCIAL_STATEMENT_SCHEMA_COLUMNS}
+)
+"""
+
+FINANCIAL_CASH_FLOWS_SCHEMA = f"""
+CREATE TABLE IF NOT EXISTS financial_cash_flows (
+{FINANCIAL_STATEMENT_SCHEMA_COLUMNS}
+)
+"""
+
+FINANCIAL_KEY_METRICS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS financial_key_metrics (
+    stock_code VARCHAR NOT NULL,
+    report_date VARCHAR NOT NULL,
+    report_year INTEGER,
+    report_type VARCHAR NOT NULL,
+    metric_name VARCHAR NOT NULL,
+    metric_value DOUBLE,
+    metric_unit VARCHAR NOT NULL,
+    raw_field_name VARCHAR NOT NULL,
+    source_path VARCHAR NOT NULL,
+    source_entry VARCHAR NOT NULL,
+    source_module VARCHAR NOT NULL,
+    source_fetched_at VARCHAR,
+    source_response_hash VARCHAR,
+    structured_at VARCHAR NOT NULL
 )
 """

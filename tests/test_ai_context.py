@@ -9,11 +9,59 @@ import duckdb
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from zxtp.ai_context import generate_full_context
-from zxtp.structured import parse_company_overview, parse_research_ratings
+from zxtp.structured import (
+    parse_company_overview,
+    parse_financial_analysis,
+    parse_research_ratings,
+)
 from zxtp.tqlex import RawCacheWriter
 
 
 class AiContextGenerationTests(unittest.TestCase):
+    def write_financial_context_raw(self, data_root: Path) -> None:
+        writer = RawCacheWriter(data_root)
+        periods = [
+            ("2022-12-31", "1.000", "1000000000", "900000000", "9.0"),
+            ("2023-12-31", "1.100", "1100000000", "1000000000", "10.0"),
+            ("2024-12-31", "1.200", "1200000000", "1100000000", "10.25"),
+            ("2025-12-31", "1.300", "1300000000", "1200000000", "10.50"),
+            ("2026-03-31", "0.350", "350000000", "300000000", "2.75"),
+        ]
+        writer.write(
+            entry="tdxf10_gg_cwfx",
+            params=["002736", "zyzb", ""],
+            stock_code="002736",
+            module="zyzb",
+            source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_cwfx",
+            json_data={
+                "ErrorCode": 0,
+                "ResultSets": [
+                    {
+                        "ColDes": [
+                            {"Name": name}
+                            for name in (
+                                "rq", "mgsy", "mgxjll", "lrze", "jyr", "jzzsyl",
+                                "xsmll", "yysrtb", "jlrtbzzl",
+                            )
+                        ],
+                        "Content": [
+                            [date, eps, "0.500", total_profit, net_profit, roe, "30.0", "5.0", "8.0"]
+                            for date, eps, total_profit, net_profit, roe in periods
+                        ],
+                    }
+                ],
+            },
+        )
+        for module in ("lyb", "zcfzb", "xjllb"):
+            writer.write(
+                entry="tdxf10_gg_cwfx",
+                params=["002736", module, ""],
+                stock_code="002736",
+                module=module,
+                source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_cwfx",
+                json_data={"ErrorCode": 0, "ResultSets": []},
+            )
+
     def test_renders_yearly_earnings_forecast_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             data_root = Path(tmp)
@@ -486,6 +534,55 @@ class AiContextGenerationTests(unittest.TestCase):
             self.assertIn("tdxf10_gg_gdyj", text)
             self.assertIn("tdxf10_gg_gdyj_jgcgmx", text)
             self.assertIn("缺失", text)
+
+
+    def test_renders_financial_context_for_recent_annuals_and_latest_period(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            self.write_financial_context_raw(data_root)
+            parse_financial_analysis("002736", data_root)
+
+            text = generate_full_context("002736", data_root).read_text(encoding="utf-8")
+            financial_section = text.split("## 3. 财务分析", 1)[1].split(
+                "## 4. 经营分析", 1
+            )[0]
+
+            self.assertIn("### 报告期说明", financial_section)
+            self.assertIn("2023 年报", financial_section)
+            self.assertIn("2024 年报", financial_section)
+            self.assertIn("2025 年报", financial_section)
+            self.assertIn("2026-03-31", financial_section)
+            self.assertNotIn("2022 年报", financial_section)
+            self.assertIn("净资产收益率（%）", financial_section)
+            self.assertIn("10.50", financial_section)
+            self.assertIn("每股经营现金流（元）", financial_section)
+
+    def test_financial_context_degrades_when_database_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+
+            text = generate_full_context("002736", data_root).read_text(encoding="utf-8")
+
+            self.assertIn("暂无结构化财务分析", text)
+            self.assertIn("tdxf10_gg_cwfx", text)
+
+    def test_financial_context_degrades_when_database_is_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            database_path = data_root / "warehouse" / "financial.duckdb"
+            database_path.parent.mkdir(parents=True)
+            database_path.touch()
+
+            with patch(
+                "zxtp.ai_context.duckdb.connect",
+                side_effect=duckdb.IOException("database is locked"),
+            ):
+                text = generate_full_context("002736", data_root).read_text(
+                    encoding="utf-8"
+                )
+
+            self.assertIn("结构化财务分析暂不可读取", text)
+            self.assertIn("tdxf10_gg_cwfx", text)
 
 
 if __name__ == "__main__":
