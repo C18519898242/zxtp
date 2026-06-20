@@ -139,6 +139,112 @@ class CompanyOverviewStructuredTests(unittest.TestCase):
 
 
 class ResearchRatingStructuredTests(unittest.TestCase):
+    def test_parses_earnings_forecast_result_sets_into_separate_raw_tables(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            writer = RawCacheWriter(data_root)
+            for module in ("tzpjtj", "ycpjyjbg"):
+                writer.write(
+                    entry="tdxf10_gg_ybpj",
+                    params=["002736", module],
+                    stock_code="002736",
+                    module=module,
+                    source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_ybpj",
+                    json_data={"ErrorCode": 0, "ResultSets": []},
+                )
+            writer.write(
+                entry="tdxf10_gg_ybpj",
+                params=["002736", "ylyctj"],
+                stock_code="002736",
+                module="ylyctj",
+                source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_ybpj",
+                json_data={
+                    "ErrorCode": 0,
+                    "ResultSets": [
+                        {
+                            "ColDes": [{"Name": "nyear"}, {"Name": "flag"}],
+                            "Content": [["2026", "0"]],
+                        },
+                        {
+                            "ColDes": [
+                                {"Name": "T036"},
+                                {"Name": "T037"},
+                                {"Name": "T038"},
+                            ],
+                            "Content": [["1.135", "1.258", "1.353"]],
+                        },
+                        {
+                            "ColDes": [
+                                {"Name": "T002"},
+                                {"Name": "T055"},
+                                {"Name": "T059"},
+                            ],
+                            "Content": [["2023", "0.6686", "8.3704"]],
+                        },
+                        {
+                            "ColDes": [
+                                {"Name": "rq"},
+                                {"Name": "jg"},
+                                {"Name": "T019"},
+                            ],
+                            "Content": [["20231231", "8209014.6879580", "6427294103.14"]],
+                        },
+                        {
+                            "ColDes": [
+                                {"Name": "rq"},
+                                {"Name": "t023"},
+                                {"Name": "T003"},
+                            ],
+                            "Content": [["20260620", "4", "Example Securities"]],
+                        },
+                    ],
+                },
+            )
+
+            database_path = structured.parse_research_ratings("002736", data_root)
+
+            with duckdb.connect(str(database_path), read_only=True) as connection:
+                tables = {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT table_name FROM information_schema.tables"
+                    ).fetchall()
+                }
+                self.assertIn("earnings_forecast_windows", tables)
+                self.assertIn("earnings_forecast_consensuses", tables)
+                self.assertIn("earnings_forecast_history", tables)
+                self.assertIn("earnings_forecast_snapshots", tables)
+                self.assertIn("earnings_forecast_metadata", tables)
+
+                window = connection.execute(
+                    "SELECT forecast_year, raw_flag FROM earnings_forecast_windows"
+                ).fetchone()
+                consensus = connection.execute(
+                    "SELECT raw_t036, raw_t037, raw_t038 "
+                    "FROM earnings_forecast_consensuses"
+                ).fetchone()
+                history = connection.execute(
+                    "SELECT fiscal_year, raw_t055, raw_t059 "
+                    "FROM earnings_forecast_history"
+                ).fetchone()
+                snapshot = connection.execute(
+                    "SELECT snapshot_date, raw_jg, raw_t019 "
+                    "FROM earnings_forecast_snapshots"
+                ).fetchone()
+                metadata = connection.execute(
+                    "SELECT metadata_date, raw_t023, company_name "
+                    "FROM earnings_forecast_metadata"
+                ).fetchone()
+
+            self.assertEqual(window, ("2026", "0"))
+            self.assertEqual(consensus, ("1.135", "1.258", "1.353"))
+            self.assertEqual(history, ("2023", "0.6686", "8.3704"))
+            self.assertEqual(
+                snapshot,
+                ("20231231", "8209014.6879580", "6427294103.14"),
+            )
+            self.assertEqual(metadata, ("20260620", "4", "Example Securities"))
+
     def test_parses_rating_summary_and_reports_into_duckdb(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             data_root = Path(tmp)

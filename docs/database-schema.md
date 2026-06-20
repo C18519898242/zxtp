@@ -6,7 +6,7 @@
 D:/zxtp_data/warehouse/research.duckdb
 ```
 
-本文说明当前已经结构化的三张表。每次重新下载同一只股票的对应模块时，程序会用最新 raw JSON 更新这些表。
+本文说明当前已经结构化的表。每次重新下载同一只股票的对应模块时，程序会用最新 raw JSON 更新这些表。
 
 ## 表一览
 
@@ -15,6 +15,11 @@ D:/zxtp_data/warehouse/research.duckdb
 | `company_overviews` | 一家上市公司的公司概况 | `gsgk` 公司概况 |
 | `research_rating_summaries` | 某日、某个统计窗口的一组研报评级原始统计值 | `ybpj/tzpjtj` 投资评级统计 |
 | `research_reports` | 一篇机构研报 | `ybpj/ycpjyjbg` 预测评级研报 |
+| `earnings_forecast_windows` | 盈利预测的起始年份和原始状态 | `ybpj/ylyctj` 结果集 1 |
+| `earnings_forecast_consensuses` | 一组原始盈利预测汇总值 | `ybpj/ylyctj` 结果集 2 |
+| `earnings_forecast_history` | 一年对应的一组原始历史指标 | `ybpj/ylyctj` 结果集 3 |
+| `earnings_forecast_snapshots` | 一个日期对应的一组原始预测快照值 | `ybpj/ylyctj` 结果集 4 |
+| `earnings_forecast_metadata` | 一条盈利预测的来源日期和公司名称元信息 | `ybpj/ylyctj` 结果集 5 |
 
 ## 所有表共有的溯源字段
 
@@ -105,24 +110,44 @@ D:/zxtp_data/warehouse/research.duckdb
 - `analysis_text` 是原始机构观点，不是 ZXTP 或 AI 的投资建议。
 - 同一日期的多篇报告并不表示独立验证，可能引用相同公开信息。
 
+## `earnings_forecast_*`：盈利预测原始结构
+
+这五张表来自同一份 `ylyctj` raw JSON 的五个结果集。它们的行粒度不同，不能横向拼成一张表；程序按每张表的股票代码整体替换，以保持与最新 raw 缓存一致。
+
+目前只把已确认的年份、日期、公司名称命名为业务字段。其余 `raw_t...`、`raw_jg` 字段按 TQLEX 原样保存，尚未确认对应的是营收、利润、每股指标还是其他财务口径，也没有假设单位。
+
+| 表名 | 一行代表什么 | 已确认字段 | 原始字段 |
+| --- | --- | --- | --- |
+| `earnings_forecast_windows` | 一个预测起始年份窗口 | `forecast_year`：预测起始年度；`raw_flag`：原始状态值 | `nyear`、`flag` |
+| `earnings_forecast_consensuses` | 一组预测汇总原始值 | 暂无 | `T021` 至 `T038`（存为 `raw_t021` 至 `raw_t038`） |
+| `earnings_forecast_history` | 一个财年对应的历史原始值 | `fiscal_year`：财年 | `T055`、`T059`、`T064`、`T018`、`T003`、`T012`、`T118` |
+| `earnings_forecast_snapshots` | 一个数据日期对应的原始快照 | `snapshot_date`：数据日期 | `jg`、`T019`（存为 `raw_jg`、`raw_t019`） |
+| `earnings_forecast_metadata` | 一条数据来源元信息 | `metadata_date`：数据日期；`company_name`：公司名称 | `t023`（存为 `raw_t023`） |
+
+**使用建议：**
+
+- 在 DBeaver 中先按 `stock_code` 过滤；再分别查看这五张表，不要依赖行号把它们关联起来。
+- AI Context 只显示预测起始年度、来源日期与各表记录数，避免把未确认口径的数值误写成投资结论。
+- 后续字段字典确认后，可在保留 `raw_*` 原始列的基础上新增语义明确的业务列。
+
 ## 表之间如何关联
 
-三张表都使用 `stock_code` 表示同一家公司。DBeaver 中可用它建立联表或过滤：
+所有表都使用 `stock_code` 表示同一家公司。DBeaver 中可用它建立联表或过滤：
 
 ```text
 company_overviews.stock_code
     = research_rating_summaries.stock_code
     = research_reports.stock_code
+    = earnings_forecast_*.stock_code
 ```
 
-常见查看顺序：先打开 `company_overviews` 了解公司，再在 `research_reports` 按日期查看最近机构观点；`research_rating_summaries` 作为评级统计的原始数据补充。
+常见查看顺序：先打开 `company_overviews` 了解公司，再在 `research_reports` 按日期查看最近机构观点；`research_rating_summaries` 作为评级统计的原始数据补充；需要核对盈利预测来源时，再查看五张 `earnings_forecast_*` 表。
 
 ## 后续会新增的表
 
-研报评级路线图中的阶段 2 至 4 尚未实施，预计会增加：
+研报评级路线图中，阶段 2 和阶段 4 尚未实施，预计会增加：
 
 - `earnings_forecast_details`：机构盈利预测明细。
-- `earnings_forecast_consensuses`：盈利预测汇总。
 - `performance_expectations`：业绩预期。
 - `daily_close_prices`：价格序列。
 

@@ -282,13 +282,50 @@ def render_research_ratings(data_root: Path, stock_code: str) -> str:
                 """,
                 [stock_code],
             ).fetchall()
+            try:
+                forecast_window = connection.execute(
+                    """
+                    SELECT forecast_year
+                    FROM earnings_forecast_windows
+                    WHERE stock_code = ?
+                    ORDER BY forecast_year DESC NULLS LAST
+                    LIMIT 1
+                    """,
+                    [stock_code],
+                ).fetchone()
+                forecast_metadata = connection.execute(
+                    """
+                    SELECT metadata_date, company_name
+                    FROM earnings_forecast_metadata
+                    WHERE stock_code = ?
+                    ORDER BY metadata_date DESC NULLS LAST
+                    LIMIT 1
+                    """,
+                    [stock_code],
+                ).fetchone()
+                forecast_counts = connection.execute(
+                    """
+                    SELECT
+                        (SELECT count(*) FROM earnings_forecast_consensuses
+                         WHERE stock_code = ?),
+                        (SELECT count(*) FROM earnings_forecast_history
+                         WHERE stock_code = ?),
+                        (SELECT count(*) FROM earnings_forecast_snapshots
+                         WHERE stock_code = ?)
+                    """,
+                    [stock_code, stock_code, stock_code],
+                ).fetchone()
+            except duckdb.Error:
+                forecast_window = None
+                forecast_metadata = None
+                forecast_counts = None
     except duckdb.Error:
         return (
             "结构化研报评级暂不可读取：DuckDB 数据库可能正被其他程序占用，"
             "或尚未生成相关数据表。请断开 DBeaver 连接后重新生成 AI Context。"
         )
 
-    if summary is None and not reports:
+    if summary is None and not reports and forecast_window is None:
         return "暂无结构化研报评级。请先下载研报评级数据。"
 
     sections = []
@@ -323,6 +360,28 @@ def render_research_ratings(data_root: Path, stock_code: str) -> str:
             ]
             report_lines.append("- " + " | ".join(value or "-" for value in fields))
         sections.append("\n".join(report_lines))
+
+    if forecast_window is not None or forecast_metadata is not None:
+        forecast_lines = ["### 盈利预测统计（原始结构化）"]
+        if forecast_window is not None:
+            forecast_year = format_context_value(forecast_window[0])
+            if forecast_year is not None:
+                forecast_lines.append(f"- 预测起始年度：{forecast_year}")
+        if forecast_metadata is not None:
+            metadata_date = format_context_value(forecast_metadata[0])
+            if metadata_date is not None:
+                forecast_lines.append(f"- 源数据日期：{metadata_date}")
+        if forecast_counts is not None:
+            consensus_count, history_count, snapshot_count = forecast_counts
+            forecast_lines.extend(
+                [
+                    f"- 原始预测汇总记录：{consensus_count}",
+                    f"- 原始历史记录：{history_count}",
+                    f"- 原始快照记录：{snapshot_count}",
+                ]
+            )
+        forecast_lines.append("- 数值字段暂按原始 TQLEX 字段保存，尚未赋予财务口径。")
+        sections.append("\n".join(forecast_lines))
 
     return "\n\n".join(sections)
 

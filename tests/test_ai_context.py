@@ -11,6 +11,65 @@ from zxtp.tqlex import RawCacheWriter
 
 
 class AiContextGenerationTests(unittest.TestCase):
+    def test_includes_earnings_forecast_raw_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            writer = RawCacheWriter(data_root)
+            for module in ("tzpjtj", "ycpjyjbg"):
+                writer.write(
+                    entry="tdxf10_gg_ybpj",
+                    params=["002736", module],
+                    stock_code="002736",
+                    module=module,
+                    source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_ybpj",
+                    json_data={"ErrorCode": 0, "ResultSets": []},
+                )
+            writer.write(
+                entry="tdxf10_gg_ybpj",
+                params=["002736", "ylyctj"],
+                stock_code="002736",
+                module="ylyctj",
+                source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_ybpj",
+                json_data={
+                    "ErrorCode": 0,
+                    "ResultSets": [
+                        {
+                            "ColDes": [{"Name": "nyear"}, {"Name": "flag"}],
+                            "Content": [["2026", "0"]],
+                        },
+                        {
+                            "ColDes": [{"Name": "T036"}],
+                            "Content": [["1.135"]],
+                        },
+                        {
+                            "ColDes": [{"Name": "T002"}],
+                            "Content": [["2023"]],
+                        },
+                        {
+                            "ColDes": [{"Name": "rq"}],
+                            "Content": [["20231231"]],
+                        },
+                        {
+                            "ColDes": [{"Name": "rq"}, {"Name": "T003"}],
+                            "Content": [["20260620", "Example Securities"]],
+                        },
+                    ],
+                },
+            )
+            parse_research_ratings("002736", data_root)
+
+            output_path = generate_full_context("002736", data_root)
+
+            text = output_path.read_text(encoding="utf-8")
+            research_section = text.split("## 6. 研报评级", 1)[1].split(
+                "## 7. 行业分析", 1
+            )[0]
+            self.assertIn("预测起始年度：2026", research_section)
+            self.assertIn("源数据日期：20260620", research_section)
+            self.assertIn("原始预测汇总记录：1", research_section)
+            self.assertIn("原始历史记录：1", research_section)
+            self.assertIn("原始快照记录：1", research_section)
+
     def test_includes_structured_research_ratings(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             data_root = Path(tmp)

@@ -14,6 +14,7 @@ COMPANY_OVERVIEW_MODULE = "gsgk"
 RESEARCH_RATING_ENTRY = "tdxf10_gg_ybpj"
 RESEARCH_RATING_SUMMARY_MODULE = "tzpjtj"
 RESEARCH_REPORT_MODULE = "ycpjyjbg"
+EARNINGS_FORECAST_MODULE = "ylyctj"
 
 COMPANY_OVERVIEW_FIELDS = {
     "name": "T003",
@@ -61,6 +62,58 @@ RESEARCH_REPORT_FIELDS = {
     "analysis_text": "ytxt",
     "rating_score": "T004",
     "title": "T039",
+}
+
+EARNINGS_FORECAST_WINDOW_FIELDS = {
+    "forecast_year": "nyear",
+    "raw_flag": "flag",
+}
+
+EARNINGS_FORECAST_CONSENSUS_FIELDS = {
+    f"raw_{field.lower()}": field
+    for field in (
+        "T036",
+        "T037",
+        "T038",
+        "T027",
+        "T028",
+        "T029",
+        "T024",
+        "T025",
+        "T026",
+        "T033",
+        "T034",
+        "T035",
+        "T021",
+        "T022",
+        "T023",
+        "T030",
+        "T031",
+        "T032",
+    )
+}
+
+EARNINGS_FORECAST_HISTORY_FIELDS = {
+    "fiscal_year": "T002",
+    "raw_t055": "T055",
+    "raw_t059": "T059",
+    "raw_t064": "T064",
+    "raw_t018": "T018",
+    "raw_t003": "T003",
+    "raw_t012": "T012",
+    "raw_t118": "T118",
+}
+
+EARNINGS_FORECAST_SNAPSHOT_FIELDS = {
+    "snapshot_date": "rq",
+    "raw_jg": "jg",
+    "raw_t019": "T019",
+}
+
+EARNINGS_FORECAST_METADATA_FIELDS = {
+    "metadata_date": "rq",
+    "raw_t023": "t023",
+    "company_name": "T003",
 }
 
 
@@ -118,12 +171,22 @@ def parse_research_ratings(stock_code: str, data_root: Path) -> Path:
         stock_code=valid_stock_code,
         module=RESEARCH_REPORT_MODULE,
     )
+    forecast_paths = writer.paths(
+        entry=RESEARCH_RATING_ENTRY,
+        stock_code=valid_stock_code,
+        module=EARNINGS_FORECAST_MODULE,
+    )
     for paths in (summary_paths, report_paths):
         if not paths.data_path.exists():
             raise TqlexError(f"research rating raw JSON not found: {paths.data_path}")
 
     summary_rows = result_set_rows(read_json_object(summary_paths.data_path))
     report_rows = result_set_rows(read_json_object(report_paths.data_path))
+    forecast_rows_by_result_set = (
+        all_result_set_rows(read_json_object(forecast_paths.data_path))
+        if forecast_paths.data_path.exists()
+        else None
+    )
     summary_metadata = (
         read_json_object(summary_paths.meta_path)
         if summary_paths.meta_path.exists()
@@ -134,6 +197,11 @@ def parse_research_ratings(stock_code: str, data_root: Path) -> Path:
         if report_paths.meta_path.exists()
         else {}
     )
+    forecast_metadata = (
+        read_json_object(forecast_paths.meta_path)
+        if forecast_paths.meta_path.exists()
+        else {}
+    )
     database_path = data_root / "warehouse" / "research.duckdb"
     database_path.parent.mkdir(parents=True, exist_ok=True)
     structured_at = now_shanghai_iso()
@@ -141,6 +209,11 @@ def parse_research_ratings(stock_code: str, data_root: Path) -> Path:
     with duckdb.connect(str(database_path)) as connection:
         connection.execute(RESEARCH_RATING_SUMMARIES_SCHEMA)
         connection.execute(RESEARCH_REPORTS_SCHEMA)
+        connection.execute(EARNINGS_FORECAST_WINDOWS_SCHEMA)
+        connection.execute(EARNINGS_FORECAST_CONSENSUSES_SCHEMA)
+        connection.execute(EARNINGS_FORECAST_HISTORY_SCHEMA)
+        connection.execute(EARNINGS_FORECAST_SNAPSHOTS_SCHEMA)
+        connection.execute(EARNINGS_FORECAST_METADATA_SCHEMA)
         connection.execute("BEGIN")
         try:
             replace_research_rating_summaries(
@@ -159,6 +232,15 @@ def parse_research_ratings(stock_code: str, data_root: Path) -> Path:
                 metadata=report_metadata,
                 structured_at=structured_at,
             )
+            if forecast_rows_by_result_set is not None:
+                replace_earnings_forecast_result_sets(
+                    connection,
+                    stock_code=valid_stock_code,
+                    rows_by_result_set=forecast_rows_by_result_set,
+                    paths=forecast_paths,
+                    metadata=forecast_metadata,
+                    structured_at=structured_at,
+                )
         except Exception:
             connection.execute("ROLLBACK")
             raise
@@ -212,33 +294,42 @@ def company_overview_row(
 
 
 def result_set_rows(json_data: dict[str, Any]) -> list[dict[str, Any]]:
+    rows_by_result_set = all_result_set_rows(json_data)
+    return rows_by_result_set[0] if rows_by_result_set else []
+
+
+def all_result_set_rows(json_data: dict[str, Any]) -> list[list[dict[str, Any]]]:
     result_sets = json_data.get("ResultSets")
     if not isinstance(result_sets, list) or not result_sets:
         return []
 
-    result_set = result_sets[0]
-    if not isinstance(result_set, dict):
-        raise TqlexError("research rating result set is invalid")
-    columns = result_set.get("ColDes")
-    content = result_set.get("Content")
-    if not isinstance(columns, list) or not isinstance(content, list):
-        return []
+    rows_by_result_set = []
+    for result_set in result_sets:
+        if not isinstance(result_set, dict):
+            raise TqlexError("research rating result set is invalid")
+        columns = result_set.get("ColDes")
+        content = result_set.get("Content")
+        if not isinstance(columns, list) or not isinstance(content, list):
+            rows_by_result_set.append([])
+            continue
 
-    column_names = [
-        column.get("Name") if isinstance(column, dict) else None for column in columns
-    ]
-    rows = []
-    for values in content:
-        if not isinstance(values, list):
-            raise TqlexError("research rating row is invalid")
-        rows.append(
-            {
-                name: values[index]
-                for index, name in enumerate(column_names)
-                if isinstance(name, str) and index < len(values)
-            }
-        )
-    return rows
+        column_names = [
+            column.get("Name") if isinstance(column, dict) else None
+            for column in columns
+        ]
+        rows = []
+        for values in content:
+            if not isinstance(values, list):
+                raise TqlexError("research rating row is invalid")
+            rows.append(
+                {
+                    name: values[index]
+                    for index, name in enumerate(column_names)
+                    if isinstance(name, str) and index < len(values)
+                }
+            )
+        rows_by_result_set.append(rows)
+    return rows_by_result_set
 
 
 def replace_research_rating_summaries(
@@ -320,6 +411,116 @@ def replace_research_reports(
             ]
         )
     connection.executemany(RESEARCH_REPORTS_INSERT, values)
+
+
+def replace_earnings_forecast_result_sets(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    stock_code: str,
+    rows_by_result_set: list[list[dict[str, Any]]],
+    paths: Any,
+    metadata: dict[str, Any],
+    structured_at: str,
+) -> None:
+    replace_earnings_forecast_table(
+        connection,
+        table_name="earnings_forecast_windows",
+        fields=EARNINGS_FORECAST_WINDOW_FIELDS,
+        stock_code=stock_code,
+        rows=result_set_at(rows_by_result_set, 0),
+        paths=paths,
+        metadata=metadata,
+        structured_at=structured_at,
+    )
+    replace_earnings_forecast_table(
+        connection,
+        table_name="earnings_forecast_consensuses",
+        fields=EARNINGS_FORECAST_CONSENSUS_FIELDS,
+        stock_code=stock_code,
+        rows=result_set_at(rows_by_result_set, 1),
+        paths=paths,
+        metadata=metadata,
+        structured_at=structured_at,
+    )
+    replace_earnings_forecast_table(
+        connection,
+        table_name="earnings_forecast_history",
+        fields=EARNINGS_FORECAST_HISTORY_FIELDS,
+        stock_code=stock_code,
+        rows=result_set_at(rows_by_result_set, 2),
+        paths=paths,
+        metadata=metadata,
+        structured_at=structured_at,
+    )
+    replace_earnings_forecast_table(
+        connection,
+        table_name="earnings_forecast_snapshots",
+        fields=EARNINGS_FORECAST_SNAPSHOT_FIELDS,
+        stock_code=stock_code,
+        rows=result_set_at(rows_by_result_set, 3),
+        paths=paths,
+        metadata=metadata,
+        structured_at=structured_at,
+    )
+    replace_earnings_forecast_table(
+        connection,
+        table_name="earnings_forecast_metadata",
+        fields=EARNINGS_FORECAST_METADATA_FIELDS,
+        stock_code=stock_code,
+        rows=result_set_at(rows_by_result_set, 4),
+        paths=paths,
+        metadata=metadata,
+        structured_at=structured_at,
+    )
+
+
+def result_set_at(
+    rows_by_result_set: list[list[dict[str, Any]]], index: int
+) -> list[dict[str, Any]]:
+    return rows_by_result_set[index] if index < len(rows_by_result_set) else []
+
+
+def replace_earnings_forecast_table(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    table_name: str,
+    fields: dict[str, str],
+    stock_code: str,
+    rows: list[dict[str, Any]],
+    paths: Any,
+    metadata: dict[str, Any],
+    structured_at: str,
+) -> None:
+    connection.execute(f"DELETE FROM {table_name} WHERE stock_code = ?", [stock_code])
+    if not rows:
+        return
+
+    source_columns = (
+        "source_path",
+        "source_entry",
+        "source_module",
+        "source_fetched_at",
+        "source_response_hash",
+        "structured_at",
+    )
+    columns = ("stock_code", *fields, *source_columns)
+    placeholders = ", ".join("?" for _ in columns)
+    statement = f"INSERT INTO {table_name} ({', '.join(columns)}) VALUES ({placeholders})"
+    values = []
+    for row in rows:
+        values.append(
+            [
+                stock_code,
+                *(normalize_text(row.get(source_name)) for source_name in fields.values()),
+                paths.data_path.as_posix(),
+                RESEARCH_RATING_ENTRY,
+                EARNINGS_FORECAST_MODULE,
+                metadata.get("fetched_at"),
+                metadata.get("response_hash"),
+                structured_at,
+            ]
+        )
+    connection.executemany(statement, values)
 
 
 def normalize_text(value: Any) -> str | None:
@@ -514,4 +715,103 @@ INSERT INTO research_reports (
     source_fetched_at, source_response_hash, structured_at
 )
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"""
+
+
+EARNINGS_FORECAST_WINDOWS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS earnings_forecast_windows (
+    stock_code VARCHAR NOT NULL,
+    forecast_year VARCHAR,
+    raw_flag VARCHAR,
+    source_path VARCHAR NOT NULL,
+    source_entry VARCHAR NOT NULL,
+    source_module VARCHAR NOT NULL,
+    source_fetched_at VARCHAR,
+    source_response_hash VARCHAR,
+    structured_at VARCHAR NOT NULL
+)
+"""
+
+
+EARNINGS_FORECAST_CONSENSUSES_SCHEMA = """
+CREATE TABLE IF NOT EXISTS earnings_forecast_consensuses (
+    stock_code VARCHAR NOT NULL,
+    raw_t036 VARCHAR,
+    raw_t037 VARCHAR,
+    raw_t038 VARCHAR,
+    raw_t027 VARCHAR,
+    raw_t028 VARCHAR,
+    raw_t029 VARCHAR,
+    raw_t024 VARCHAR,
+    raw_t025 VARCHAR,
+    raw_t026 VARCHAR,
+    raw_t033 VARCHAR,
+    raw_t034 VARCHAR,
+    raw_t035 VARCHAR,
+    raw_t021 VARCHAR,
+    raw_t022 VARCHAR,
+    raw_t023 VARCHAR,
+    raw_t030 VARCHAR,
+    raw_t031 VARCHAR,
+    raw_t032 VARCHAR,
+    source_path VARCHAR NOT NULL,
+    source_entry VARCHAR NOT NULL,
+    source_module VARCHAR NOT NULL,
+    source_fetched_at VARCHAR,
+    source_response_hash VARCHAR,
+    structured_at VARCHAR NOT NULL
+)
+"""
+
+
+EARNINGS_FORECAST_HISTORY_SCHEMA = """
+CREATE TABLE IF NOT EXISTS earnings_forecast_history (
+    stock_code VARCHAR NOT NULL,
+    fiscal_year VARCHAR,
+    raw_t055 VARCHAR,
+    raw_t059 VARCHAR,
+    raw_t064 VARCHAR,
+    raw_t018 VARCHAR,
+    raw_t003 VARCHAR,
+    raw_t012 VARCHAR,
+    raw_t118 VARCHAR,
+    source_path VARCHAR NOT NULL,
+    source_entry VARCHAR NOT NULL,
+    source_module VARCHAR NOT NULL,
+    source_fetched_at VARCHAR,
+    source_response_hash VARCHAR,
+    structured_at VARCHAR NOT NULL
+)
+"""
+
+
+EARNINGS_FORECAST_SNAPSHOTS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS earnings_forecast_snapshots (
+    stock_code VARCHAR NOT NULL,
+    snapshot_date VARCHAR,
+    raw_jg VARCHAR,
+    raw_t019 VARCHAR,
+    source_path VARCHAR NOT NULL,
+    source_entry VARCHAR NOT NULL,
+    source_module VARCHAR NOT NULL,
+    source_fetched_at VARCHAR,
+    source_response_hash VARCHAR,
+    structured_at VARCHAR NOT NULL
+)
+"""
+
+
+EARNINGS_FORECAST_METADATA_SCHEMA = """
+CREATE TABLE IF NOT EXISTS earnings_forecast_metadata (
+    stock_code VARCHAR NOT NULL,
+    metadata_date VARCHAR,
+    raw_t023 VARCHAR,
+    company_name VARCHAR,
+    source_path VARCHAR NOT NULL,
+    source_entry VARCHAR NOT NULL,
+    source_module VARCHAR NOT NULL,
+    source_fetched_at VARCHAR,
+    source_response_hash VARCHAR,
+    structured_at VARCHAR NOT NULL
+)
 """
