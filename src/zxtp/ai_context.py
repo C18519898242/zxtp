@@ -202,6 +202,7 @@ def generate_full_context(stock_code: str, data_root: Path) -> Path:
     business_statuses = source_statuses(
         data_root, valid_stock_code, BUSINESS_ANALYSIS_SOURCES
     )
+    business_analysis = render_business_analysis(data_root, valid_stock_code)
     dividend_statuses = source_statuses(
         data_root, valid_stock_code, DIVIDEND_FINANCING_SOURCES
     )
@@ -236,6 +237,7 @@ def generate_full_context(stock_code: str, data_root: Path) -> Path:
             "company_overview_sources": render_sources(company_statuses),
             "financial_analysis": financial_analysis,
             "financial_analysis_sources": render_sources(financial_statuses),
+            "business_analysis": business_analysis,
             "business_analysis_sources": render_sources(business_statuses),
             "dividend_financing_sources": render_sources(dividend_statuses),
             "research_ratings": research_ratings,
@@ -316,6 +318,134 @@ def render_financial_analysis(data_root: Path, stock_code: str) -> str:
         *render_cash_flow_table(cash_flow_rows, periods, labels),
     ]
     return "\n".join(lines)
+
+
+def render_business_analysis(data_root: Path, stock_code: str) -> str:
+    database_path = data_root / "warehouse" / "business.duckdb"
+    if not database_path.exists():
+        return "暂无结构化经营分析。请先下载经营分析数据。"
+
+    try:
+        with duckdb.connect(str(database_path), read_only=True) as connection:
+            profile = connection.execute(
+                """
+                SELECT business_summary, products
+                FROM business_profiles
+                WHERE stock_code = ?
+                """,
+                [stock_code],
+            ).fetchone()
+            operating_metrics = connection.execute(
+                """
+                SELECT report_date, metric_name, metric_value
+                FROM business_operating_metrics
+                WHERE stock_code = ?
+                  AND report_date = (
+                      SELECT max(report_date)
+                      FROM business_operating_metrics
+                      WHERE stock_code = ?
+                  )
+                ORDER BY metric_name
+                """,
+                [stock_code, stock_code],
+            ).fetchall()
+            compositions = connection.execute(
+                """
+                SELECT report_date, business_name, revenue_amount, revenue_ratio_pct,
+                       cost_amount, cost_ratio_pct, gross_profit_amount,
+                       gross_profit_ratio_pct, gross_margin_pct
+                FROM business_compositions
+                WHERE stock_code = ?
+                  AND dimension = '按业务'
+                  AND report_date = (
+                      SELECT max(report_date)
+                      FROM business_compositions
+                      WHERE stock_code = ? AND dimension = '按业务'
+                  )
+                ORDER BY revenue_amount DESC NULLS LAST, business_name
+                """,
+                [stock_code, stock_code],
+            ).fetchall()
+    except duckdb.Error:
+        return (
+            "结构化经营分析暂不可读取；DuckDB 数据库可能正被其他程序占用，"
+            "请断开 DBeaver 连接后重新生成 AI Context。"
+        )
+
+    lines = [
+        *render_business_profile(profile),
+        *render_operating_metrics_table(operating_metrics),
+        *render_business_composition_table(compositions),
+    ]
+    return "\n".join(lines) if lines else "暂无结构化经营分析。请先下载经营分析数据。"
+
+
+def render_business_profile(profile: tuple[Any, ...] | None) -> list[str]:
+    if profile is None:
+        return []
+    lines = []
+    if profile[0] is not None:
+        lines.append(f"- 主营业务：{profile[0]}")
+    if profile[1] is not None:
+        lines.append(f"- 产品与服务：{profile[1]}")
+    return ["### 主营介绍", *lines, ""] if lines else []
+
+
+def render_operating_metrics_table(rows: list[tuple[Any, ...]]) -> list[str]:
+    if not rows:
+        return []
+    report_date = rows[0][0]
+    lines = [
+        f"### 经营数据（截至 {report_date}）",
+        "| 指标 | 数值 |",
+        "| --- | ---: |",
+    ]
+    for _, metric_name, metric_value in rows:
+        value = "—" if metric_value is None else f"{float(metric_value):.2f}"
+        lines.append(f"| {metric_name} | {value} |")
+    return [*lines, ""]
+
+
+def render_business_composition_table(rows: list[tuple[Any, ...]]) -> list[str]:
+    if not rows:
+        return []
+    report_date = rows[0][0]
+    label = f"{report_date[:4]} 年报" if report_date.endswith("-12-31") else report_date
+    lines = [
+        f"### 主营构成（{label}，按业务）",
+        "| 业务 | 营业收入（亿元） | 收入占比（%） | 营业成本（亿元） | "
+        "成本占比（%） | 毛利（亿元） | 毛利占比（%） | 毛利率（%） |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for row in rows:
+        _, business_name, revenue, revenue_ratio, cost, cost_ratio, gross_profit, gross_profit_ratio, gross_margin = row
+        amounts = (revenue, cost, gross_profit)
+        formatted_amounts = [
+            "—" if value is None else f"{float(value) / 100_000_000:.2f}"
+            for value in amounts
+        ]
+        formatted_ratios = [
+            "—" if value is None else f"{float(value):.2f}"
+            for value in (revenue_ratio, cost_ratio, gross_profit_ratio, gross_margin)
+        ]
+        lines.append(
+            "| "
+            + str(business_name)
+            + " | "
+            + " | ".join(
+                [
+                    formatted_amounts[0],
+                    formatted_ratios[0],
+                    formatted_amounts[1],
+                    formatted_ratios[1],
+                    formatted_amounts[2],
+                    formatted_ratios[2],
+                    formatted_ratios[3],
+                ]
+            )
+            + " |"
+        )
+    return [*lines, ""]
 
 
 def financial_context_periods(rows: list[tuple[Any, ...]]) -> list[str]:

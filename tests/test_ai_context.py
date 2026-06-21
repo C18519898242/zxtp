@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from zxtp.ai_context import generate_full_context
 from zxtp.structured import (
+    parse_business_analysis,
     parse_company_overview,
     parse_financial_analysis,
     parse_research_ratings,
@@ -729,6 +730,148 @@ class AiContextGenerationTests(unittest.TestCase):
 
             self.assertIn("结构化财务分析暂不可读取", text)
             self.assertIn("tdxf10_gg_cwfx", text)
+
+
+    def write_business_context_raw(self, data_root: Path) -> None:
+        writer = RawCacheWriter(data_root)
+        writer.write(
+            entry="tdxf10_gg_jyfx",
+            params=["002736", "zyyw", ""],
+            stock_code="002736",
+            module="zyyw",
+            source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_jyfx",
+            json_data={
+                "ErrorCode": 0,
+                "ResultSets": [
+                    {
+                        "ColDes": [{"Name": "T017"}],
+                        "Content": [["Network services"]],
+                    },
+                    {
+                        "ColDes": [{"Name": "cpmc"}],
+                        "Content": [["Broadband"]],
+                    },
+                ],
+            },
+        )
+        writer.write(
+            entry="tdxf10_gg_jyfx_jysj",
+            params=["002736"],
+            stock_code="002736",
+            module="jysj",
+            source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_jyfx_jysj",
+            json_data={
+                "ErrorCode": 0,
+                "ResultSets": [
+                    {
+                        "ColDes": [
+                            {"Name": name}
+                            for name in ("N001", "N002", "N003", "N004")
+                        ],
+                        "Content": [
+                            ["2025-12-31", "Mobile customers (10k)", "99900", "1001"],
+                            ["2026-03-31", "Mobile customers (10k)", "100900", "1001"],
+                        ],
+                    }
+                ],
+            },
+        )
+        writer.write(
+            entry="tdxf10_gg_jyfx",
+            params=["002736", "zygc", "20251231"],
+            stock_code="002736",
+            module="zygc",
+            source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_jyfx",
+            json_data={
+                "ErrorCode": 0,
+                "ResultSets": [
+                    {
+                        "ColDes": [
+                            {"Name": name}
+                            for name in (
+                                "N000",
+                                "N001",
+                                "N002",
+                                "N003",
+                                "N004",
+                                "N005",
+                                "N006",
+                                "N007",
+                                "N008",
+                                "N009",
+                            )
+                        ],
+                        "Content": [
+                            [
+                                "按业务",
+                                "4",
+                                "Wireless",
+                                "369092000000",
+                                "35.145360",
+                                "200000000000",
+                                "20.0",
+                                "169092000000",
+                                "50.0",
+                                "45.811",
+                            ]
+                        ],
+                    },
+                    {
+                        "ColDes": [{"Name": "rq"}],
+                        "Content": [["20251231"]],
+                    },
+                ],
+            },
+        )
+
+    def test_renders_structured_business_analysis(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            self.write_business_context_raw(data_root)
+            parse_business_analysis("002736", data_root)
+
+            text = generate_full_context("002736", data_root).read_text(encoding="utf-8")
+            business_section = text.split("## 4. 经营分析", 1)[1].split(
+                "## 5. 分红融资", 1
+            )[0]
+
+            self.assertIn("### 主营介绍", business_section)
+            self.assertIn("Network services", business_section)
+            self.assertIn("### 经营数据（截至 2026-03-31）", business_section)
+            self.assertIn("| 指标 | 数值 |", business_section)
+            self.assertIn(
+                "| Mobile customers (10k) | 100900.00 |", business_section
+            )
+            self.assertIn("### 主营构成（2025 年报，按业务）", business_section)
+            self.assertIn(
+                "| Wireless | 3690.92 | 35.15 | 2000.00 | 20.00 | "
+                "1690.92 | 50.00 | 45.81 |",
+                business_section,
+            )
+
+    def test_business_context_degrades_when_database_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            text = generate_full_context("002736", Path(tmp)).read_text(encoding="utf-8")
+
+            self.assertIn("暂无结构化经营分析", text)
+
+    def test_business_context_degrades_when_database_is_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            database_path = data_root / "warehouse" / "business.duckdb"
+            database_path.parent.mkdir(parents=True)
+            database_path.touch()
+
+            with patch(
+                "zxtp.ai_context.duckdb.connect",
+                side_effect=duckdb.IOException("database is locked"),
+            ):
+                text = generate_full_context("002736", data_root).read_text(
+                    encoding="utf-8"
+                )
+
+            self.assertIn("结构化经营分析暂不可读取", text)
+            self.assertIn("DBeaver", text)
 
 
 if __name__ == "__main__":
