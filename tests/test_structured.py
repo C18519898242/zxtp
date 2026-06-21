@@ -746,6 +746,35 @@ class FinancialAnalysisStructuredTests(unittest.TestCase):
                 [("2025-12-31", 2025, "annual"), ("2026-03-31", 2026, "q1")],
             )
 
+    def test_parses_key_metrics_when_zyzb_uses_t002_for_report_date(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            self.write_financial_raw(
+                data_root,
+                "zyzb",
+                ["T002", "mgsy", "jyr"],
+                [["2026-03-31", "0.2856", "4483918670.00"]],
+            )
+
+            database_path = structured.parse_financial_analysis("002736", data_root)
+
+            with duckdb.connect(str(database_path), read_only=True) as connection:
+                rows = connection.execute(
+                    """
+                    SELECT report_date, report_type, metric_name, metric_value
+                    FROM financial_key_metrics
+                    ORDER BY metric_name
+                    """
+                ).fetchall()
+
+            self.assertEqual(
+                rows,
+                [
+                    ("2026-03-31", "q1", "basic_earnings_per_share", 0.2856),
+                    ("2026-03-31", "q1", "net_profit", 4483918670.0),
+                ],
+            )
+
     def test_replaces_financial_rows_for_the_same_stock(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             data_root = Path(tmp)

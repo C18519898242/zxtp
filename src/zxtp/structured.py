@@ -492,7 +492,7 @@ def replace_financial_key_metrics(
     connection.execute("DELETE FROM financial_key_metrics WHERE stock_code = ?", [stock_code])
     values = []
     for row in rows:
-        report_date = normalize_text(row.get("rq"))
+        report_date = normalize_text(row.get("rq")) or normalize_text(row.get("T002"))
         if report_date is None:
             continue
         report_year, report_type = financial_report_period(report_date)
