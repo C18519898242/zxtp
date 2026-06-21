@@ -839,5 +839,174 @@ class FinancialAnalysisStructuredTests(unittest.TestCase):
             self.assertGreater(counts[3], 0)
 
 
+class BusinessAnalysisStructuredTests(unittest.TestCase):
+    def test_parses_business_analysis_rows_and_deduplicates_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            writer = RawCacheWriter(data_root)
+            writer.write(
+                entry="tdxf10_gg_jyfx",
+                params=["002736", "zyyw", ""],
+                stock_code="002736",
+                module="zyyw",
+                source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_jyfx",
+                json_data={
+                    "ErrorCode": 0,
+                    "ResultSets": [
+                        {
+                            "ColDes": [{"Name": "T017"}],
+                            "Content": [["Network services"]],
+                        },
+                        {
+                            "ColDes": [{"Name": "cpmc"}],
+                            "Content": [["Broadband"]],
+                        },
+                    ],
+                },
+            )
+            writer.write(
+                entry="tdxf10_gg_jyfx_jysj",
+                params=["002736"],
+                stock_code="002736",
+                module="jysj",
+                source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_jyfx_jysj",
+                json_data={
+                    "ErrorCode": 0,
+                    "ResultSets": [
+                        {
+                            "ColDes": [{"Name": "N001"}],
+                            "Content": [["2026-04-21"]],
+                        },
+                        {
+                            "ColDes": [
+                                {"Name": name}
+                                for name in ("N001", "N002", "N003", "N004")
+                            ],
+                            "Content": [
+                                [
+                                    "2026-03-31",
+                                    "Mobile customers (10k)",
+                                    "100900",
+                                    "1001",
+                                ]
+                            ],
+                        },
+                        {
+                            "ColDes": [
+                                {"Name": name}
+                                for name in ("N001", "N002", "N003", "N004")
+                            ],
+                            "Content": [
+                                [
+                                    "2026-03-31",
+                                    "Mobile customers (10k)",
+                                    "100900",
+                                    "1001",
+                                ]
+                            ],
+                        },
+                    ],
+                },
+            )
+            writer.write(
+                entry="tdxf10_gg_jyfx",
+                params=["002736", "zygc", "20251231"],
+                stock_code="002736",
+                module="zygc",
+                source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_jyfx",
+                json_data={
+                    "ErrorCode": 0,
+                    "ResultSets": [
+                        {
+                            "ColDes": [
+                                {"Name": name}
+                                for name in (
+                                    "N000",
+                                    "N001",
+                                    "N002",
+                                    "N003",
+                                    "N004",
+                                    "N005",
+                                    "N006",
+                                    "N007",
+                                    "N008",
+                                    "N009",
+                                )
+                            ],
+                            "Content": [
+                                [
+                                    "按业务",
+                                    "4",
+                                    "Wireless",
+                                    "369092000000",
+                                    "35.145360",
+                                    "200000000000",
+                                    "20.0",
+                                    "169092000000",
+                                    "50.0",
+                                    "45.811",
+                                ]
+                            ],
+                        },
+                        {"ColDes": [], "Content": []},
+                        {
+                            "ColDes": [{"Name": "rq"}],
+                            "Content": [["20251231"]],
+                        },
+                    ],
+                },
+            )
+
+            database_path = structured.parse_business_analysis("002736", data_root)
+
+            self.assertEqual(
+                database_path, data_root / "warehouse" / "business.duckdb"
+            )
+            with duckdb.connect(str(database_path), read_only=True) as connection:
+                profile = connection.execute(
+                    "SELECT business_summary, products FROM business_profiles"
+                ).fetchone()
+                metrics = connection.execute(
+                    """
+                    SELECT report_date, metric_name, metric_value, metric_group_code
+                    FROM business_operating_metrics
+                    """
+                ).fetchall()
+                composition = connection.execute(
+                    """
+                    SELECT report_date, dimension, business_name, revenue_amount,
+                           gross_margin_pct
+                    FROM business_compositions
+                    """
+                ).fetchone()
+
+            self.assertEqual(profile, ("Network services", "Broadband"))
+            self.assertEqual(
+                metrics,
+                [("2026-03-31", "Mobile customers (10k)", 100900.0, "1001")],
+            )
+            self.assertEqual(
+                composition,
+                ("2025-12-31", "按业务", "Wireless", 369092000000.0, 45.811),
+            )
+
+    def test_creates_empty_business_tables_when_raw_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+
+            database_path = structured.parse_business_analysis("002736", data_root)
+
+            with duckdb.connect(str(database_path), read_only=True) as connection:
+                counts = connection.execute(
+                    """
+                    SELECT
+                        (SELECT count(*) FROM business_profiles),
+                        (SELECT count(*) FROM business_operating_metrics),
+                        (SELECT count(*) FROM business_compositions)
+                    """
+                ).fetchone()
+            self.assertEqual(counts, (0, 0, 0))
+
+
 if __name__ == "__main__":
     unittest.main()

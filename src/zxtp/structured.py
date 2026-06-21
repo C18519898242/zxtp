@@ -21,6 +21,11 @@ FINANCIAL_INCOME_STATEMENT_MODULE = "lyb"
 FINANCIAL_BALANCE_SHEET_MODULE = "zcfzb"
 FINANCIAL_CASH_FLOW_MODULE = "xjllb"
 FINANCIAL_KEY_METRICS_MODULE = "zyzb"
+BUSINESS_ANALYSIS_ENTRY = "tdxf10_gg_jyfx"
+BUSINESS_OPERATING_DATA_ENTRY = "tdxf10_gg_jyfx_jysj"
+BUSINESS_PROFILE_MODULE = "zyyw"
+BUSINESS_OPERATING_METRICS_MODULE = "jysj"
+BUSINESS_COMPOSITION_MODULE = "zygc"
 
 FINANCIAL_KEY_METRIC_FIELDS = {
     "basic_earnings_per_share": ("mgsy", "yuan"),
@@ -417,6 +422,69 @@ def parse_financial_analysis(stock_code: str, data_root: Path) -> Path:
     return database_path
 
 
+def parse_business_analysis(stock_code: str, data_root: Path) -> Path:
+    valid_stock_code = validate_stock_code(stock_code)
+    data_root = Path(data_root)
+    writer = RawCacheWriter(data_root)
+    profile_paths = writer.paths(
+        entry=BUSINESS_ANALYSIS_ENTRY,
+        stock_code=valid_stock_code,
+        module=BUSINESS_PROFILE_MODULE,
+    )
+    metric_paths = writer.paths(
+        entry=BUSINESS_OPERATING_DATA_ENTRY,
+        stock_code=valid_stock_code,
+        module=BUSINESS_OPERATING_METRICS_MODULE,
+    )
+    composition_paths = writer.paths(
+        entry=BUSINESS_ANALYSIS_ENTRY,
+        stock_code=valid_stock_code,
+        module=BUSINESS_COMPOSITION_MODULE,
+    )
+    database_path = data_root / "warehouse" / "business.duckdb"
+    database_path.parent.mkdir(parents=True, exist_ok=True)
+    structured_at = now_shanghai_iso()
+
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute(BUSINESS_PROFILES_SCHEMA)
+        connection.execute(BUSINESS_OPERATING_METRICS_SCHEMA)
+        connection.execute(BUSINESS_COMPOSITIONS_SCHEMA)
+        connection.execute("BEGIN")
+        try:
+            replace_business_profile(
+                connection,
+                stock_code=valid_stock_code,
+                rows_by_result_set=read_optional_all_result_set_rows(profile_paths),
+                paths=profile_paths,
+                metadata=read_optional_json_object(profile_paths.meta_path),
+                structured_at=structured_at,
+            )
+            replace_business_operating_metrics(
+                connection,
+                stock_code=valid_stock_code,
+                rows_by_result_set=read_optional_all_result_set_rows(metric_paths),
+                paths=metric_paths,
+                metadata=read_optional_json_object(metric_paths.meta_path),
+                structured_at=structured_at,
+            )
+            replace_business_compositions(
+                connection,
+                stock_code=valid_stock_code,
+                rows_by_result_set=read_optional_all_result_set_rows(
+                    composition_paths
+                ),
+                paths=composition_paths,
+                metadata=read_optional_json_object(composition_paths.meta_path),
+                structured_at=structured_at,
+            )
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
+        connection.execute("COMMIT")
+
+    return database_path
+
+
 def read_optional_json_object(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
@@ -433,6 +501,176 @@ def read_optional_result_set_rows(paths: Any) -> list[dict[str, Any]]:
         return result_set_rows(read_json_object(paths.data_path))
     except TqlexError:
         return []
+
+
+def read_optional_all_result_set_rows(paths: Any) -> list[list[dict[str, Any]]]:
+    if not paths.data_path.exists():
+        return []
+    try:
+        return all_result_set_rows(read_json_object(paths.data_path))
+    except TqlexError:
+        return []
+
+
+def replace_business_profile(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    stock_code: str,
+    rows_by_result_set: list[list[dict[str, Any]]],
+    paths: Any,
+    metadata: dict[str, Any],
+    structured_at: str,
+) -> None:
+    connection.execute("DELETE FROM business_profiles WHERE stock_code = ?", [stock_code])
+    business_summary = first_non_empty_result_value(rows_by_result_set, "T017")
+    products = first_non_empty_result_value(rows_by_result_set, "cpmc")
+    if business_summary is None and products is None:
+        return
+    connection.execute(
+        "INSERT INTO business_profiles VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            stock_code,
+            business_summary,
+            products,
+            paths.data_path.as_posix(),
+            BUSINESS_ANALYSIS_ENTRY,
+            BUSINESS_PROFILE_MODULE,
+            metadata.get("fetched_at"),
+            metadata.get("response_hash"),
+            structured_at,
+        ],
+    )
+
+
+def replace_business_operating_metrics(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    stock_code: str,
+    rows_by_result_set: list[list[dict[str, Any]]],
+    paths: Any,
+    metadata: dict[str, Any],
+    structured_at: str,
+) -> None:
+    connection.execute(
+        "DELETE FROM business_operating_metrics WHERE stock_code = ?", [stock_code]
+    )
+    values = []
+    seen = set()
+    for source_set_index, rows in enumerate(rows_by_result_set):
+        for row in rows:
+            report_date = normalize_report_date(normalize_text(row.get("N001")))
+            metric_name = normalize_text(row.get("N002"))
+            if report_date is None or metric_name is None:
+                continue
+            metric_value = parse_float(normalize_text(row.get("N003")))
+            metric_group_code = normalize_text(row.get("N004"))
+            key = (report_date, metric_name, metric_value, metric_group_code)
+            if key in seen:
+                continue
+            seen.add(key)
+            values.append(
+                [
+                    stock_code,
+                    report_date,
+                    metric_name,
+                    metric_value,
+                    metric_group_code,
+                    source_set_index,
+                    paths.data_path.as_posix(),
+                    BUSINESS_OPERATING_DATA_ENTRY,
+                    BUSINESS_OPERATING_METRICS_MODULE,
+                    metadata.get("fetched_at"),
+                    metadata.get("response_hash"),
+                    structured_at,
+                ]
+            )
+    if values:
+        connection.executemany(
+            "INSERT INTO business_operating_metrics VALUES "
+            f"({', '.join('?' for _ in values[0])})",
+            values,
+        )
+
+
+def replace_business_compositions(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    stock_code: str,
+    rows_by_result_set: list[list[dict[str, Any]]],
+    paths: Any,
+    metadata: dict[str, Any],
+    structured_at: str,
+) -> None:
+    connection.execute(
+        "DELETE FROM business_compositions WHERE stock_code = ?", [stock_code]
+    )
+    report_date = latest_result_set_report_date(rows_by_result_set)
+    if report_date is None:
+        return
+    values = []
+    for rows in rows_by_result_set:
+        for row in rows:
+            dimension = normalize_text(row.get("N000"))
+            business_name = normalize_text(row.get("N002"))
+            if dimension is None or business_name is None:
+                continue
+            values.append(
+                [
+                    stock_code,
+                    report_date,
+                    dimension,
+                    business_name,
+                    parse_float(normalize_text(row.get("N003"))),
+                    parse_float(normalize_text(row.get("N004"))),
+                    parse_float(normalize_text(row.get("N005"))),
+                    parse_float(normalize_text(row.get("N006"))),
+                    parse_float(normalize_text(row.get("N007"))),
+                    parse_float(normalize_text(row.get("N008"))),
+                    parse_float(normalize_text(row.get("N009"))),
+                    paths.data_path.as_posix(),
+                    BUSINESS_ANALYSIS_ENTRY,
+                    BUSINESS_COMPOSITION_MODULE,
+                    metadata.get("fetched_at"),
+                    metadata.get("response_hash"),
+                    structured_at,
+                ]
+            )
+    if values:
+        connection.executemany(
+            "INSERT INTO business_compositions VALUES "
+            f"({', '.join('?' for _ in values[0])})",
+            values,
+        )
+
+
+def first_non_empty_result_value(
+    rows_by_result_set: list[list[dict[str, Any]]], field_name: str
+) -> str | None:
+    for rows in rows_by_result_set:
+        for row in rows:
+            value = normalize_text(row.get(field_name))
+            if value is not None:
+                return value
+    return None
+
+
+def latest_result_set_report_date(
+    rows_by_result_set: list[list[dict[str, Any]]],
+) -> str | None:
+    for rows in reversed(rows_by_result_set):
+        for row in rows:
+            report_date = normalize_report_date(normalize_text(row.get("rq")))
+            if report_date is not None:
+                return report_date
+    return None
+
+
+def normalize_report_date(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if len(value) == 8 and value.isdigit():
+        return f"{value[:4]}-{value[4:6]}-{value[6:]}"
+    return value
 
 
 def replace_financial_statement(
@@ -1407,6 +1645,59 @@ CREATE TABLE IF NOT EXISTS financial_key_metrics (
     metric_value DOUBLE,
     metric_unit VARCHAR NOT NULL,
     raw_field_name VARCHAR NOT NULL,
+    source_path VARCHAR NOT NULL,
+    source_entry VARCHAR NOT NULL,
+    source_module VARCHAR NOT NULL,
+    source_fetched_at VARCHAR,
+    source_response_hash VARCHAR,
+    structured_at VARCHAR NOT NULL
+)
+"""
+
+BUSINESS_PROFILES_SCHEMA = """
+CREATE TABLE IF NOT EXISTS business_profiles (
+    stock_code VARCHAR NOT NULL,
+    business_summary VARCHAR,
+    products VARCHAR,
+    source_path VARCHAR NOT NULL,
+    source_entry VARCHAR NOT NULL,
+    source_module VARCHAR NOT NULL,
+    source_fetched_at VARCHAR,
+    source_response_hash VARCHAR,
+    structured_at VARCHAR NOT NULL
+)
+"""
+
+BUSINESS_OPERATING_METRICS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS business_operating_metrics (
+    stock_code VARCHAR NOT NULL,
+    report_date VARCHAR NOT NULL,
+    metric_name VARCHAR NOT NULL,
+    metric_value DOUBLE,
+    metric_group_code VARCHAR,
+    source_set_index INTEGER NOT NULL,
+    source_path VARCHAR NOT NULL,
+    source_entry VARCHAR NOT NULL,
+    source_module VARCHAR NOT NULL,
+    source_fetched_at VARCHAR,
+    source_response_hash VARCHAR,
+    structured_at VARCHAR NOT NULL
+)
+"""
+
+BUSINESS_COMPOSITIONS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS business_compositions (
+    stock_code VARCHAR NOT NULL,
+    report_date VARCHAR NOT NULL,
+    dimension VARCHAR NOT NULL,
+    business_name VARCHAR NOT NULL,
+    revenue_amount DOUBLE,
+    revenue_ratio_pct DOUBLE,
+    cost_amount DOUBLE,
+    cost_ratio_pct DOUBLE,
+    gross_profit_amount DOUBLE,
+    gross_profit_ratio_pct DOUBLE,
+    gross_margin_pct DOUBLE,
     source_path VARCHAR NOT NULL,
     source_entry VARCHAR NOT NULL,
     source_module VARCHAR NOT NULL,
