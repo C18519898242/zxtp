@@ -574,7 +574,13 @@ class CliFetchJyfxTests(unittest.TestCase):
             fake_client.call.side_effect = fake_call
             stdout = io.StringIO()
 
-            with patch("zxtp.cli.TqlexClient", return_value=fake_client):
+            with (
+                patch("zxtp.cli.TqlexClient", return_value=fake_client),
+                patch("zxtp.cli.parse_business_analysis") as parse_business_analysis,
+            ):
+                parse_business_analysis.return_value = (
+                    Path(tmp) / "warehouse" / "business.duckdb"
+                )
                 with redirect_stdout(stdout):
                     exit_code = main(["fetch-jyfx", "002736", "--data-root", tmp])
 
@@ -596,6 +602,9 @@ class CliFetchJyfxTests(unittest.TestCase):
             )
             output = stdout.getvalue()
             self.assertIn("saved jyfx raw JSON", output)
+            self.assertIn("saving business analysis structured data...", output)
+            self.assertIn("saved business analysis structured data:", output)
+            parse_business_analysis.assert_called_once_with("002736", Path(tmp))
             expected_paths = [
                 ("tdxf10_gg_jyfx", "zyyw"),
                 ("tdxf10_gg_jyfx_jysj", "jysj"),
@@ -878,6 +887,8 @@ class CliFetchAllTests(unittest.TestCase):
             self.assertIn("saved ybpj raw JSON", output)
             self.assertIn("saved cwfx raw JSON", output)
             self.assertIn("saved hyfx raw JSON", output)
+            self.assertIn("saving business analysis structured data...", output)
+            self.assertIn("saved business analysis structured data:", output)
             assert_output_precedes(
                 self,
                 output,
@@ -1094,7 +1105,13 @@ class CliUiJyfxTests(unittest.TestCase):
             inputs = iter(["1", "5", "002736"])
             stdout = io.StringIO()
 
-            with patch("zxtp.cli.TqlexClient", return_value=fake_client):
+            with (
+                patch("zxtp.cli.TqlexClient", return_value=fake_client),
+                patch("zxtp.cli.parse_business_analysis") as parse_business_analysis,
+            ):
+                parse_business_analysis.return_value = (
+                    Path(tmp) / "warehouse" / "business.duckdb"
+                )
                 exit_code = main(
                     ["ui", "--data-root", tmp],
                     input_func=lambda prompt="": next(inputs),
@@ -1107,6 +1124,9 @@ class CliUiJyfxTests(unittest.TestCase):
             output = stdout.getvalue()
             self.assertIn("jyfx", output)
             self.assertIn("saved jyfx raw JSON", output)
+            self.assertIn("saving business analysis structured data...", output)
+            self.assertIn("saved business analysis structured data:", output)
+            parse_business_analysis.assert_called_once_with("002736", Path(tmp))
 
     def test_ui_explains_known_jyfx_failure_for_600001(self) -> None:
         fake_client = Mock()
@@ -1243,7 +1263,13 @@ class CliUiFetchAllTests(unittest.TestCase):
             inputs = iter(["1", "8", "002736"])
             stdout = io.StringIO()
 
-            with patch("zxtp.cli.TqlexClient", return_value=fake_client):
+            with (
+                patch("zxtp.cli.TqlexClient", return_value=fake_client),
+                patch("zxtp.cli.parse_business_analysis") as parse_business_analysis,
+            ):
+                parse_business_analysis.return_value = (
+                    Path(tmp) / "warehouse" / "business.duckdb"
+                )
                 exit_code = main(
                     ["ui", "--data-root", tmp],
                     input_func=lambda prompt="": next(inputs),
@@ -1277,6 +1303,7 @@ class CliUiFetchAllTests(unittest.TestCase):
             self.assertIn("saved hyfx raw JSON", output)
             self.assertIn("开始生成 AI Context", output)
             self.assertIn("saved AI context Markdown", output)
+            parse_business_analysis.assert_called_once_with("002736", Path(tmp))
 
 
 class CliUiInputErrorTests(unittest.TestCase):

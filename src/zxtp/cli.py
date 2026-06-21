@@ -10,6 +10,7 @@ from typing import Any, Callable, Iterator, Sequence, TextIO
 from .ai_context import generate_full_context
 from .config import resolve_data_root
 from .structured import (
+    parse_business_analysis,
     parse_company_overview,
     parse_financial_analysis,
     parse_research_ratings,
@@ -773,6 +774,12 @@ def run_fetch_all(stock_code: str, data_root: Path, output_stream: TextIO) -> Pa
     print("开始下载经营分析 jyfx...", file=output_stream)
     for data_path in fetch_jyfx(valid_stock_code, data_root):
         print(f"saved jyfx raw JSON: {data_path}", file=output_stream)
+    print("saving business analysis structured data...", file=output_stream)
+    database_path = parse_business_analysis(valid_stock_code, data_root)
+    print(
+        f"saved business analysis structured data: {database_path}",
+        file=output_stream,
+    )
 
     print("开始下载分红融资 fhrz...", file=output_stream)
     for data_path in fetch_fhrz(valid_stock_code, data_root):
@@ -900,6 +907,12 @@ def run_ui(
                 print("开始下载经营分析 jyfx...", file=output_stream)
                 for data_path in fetch_jyfx(stock_code, data_root):
                     print(f"saved jyfx raw JSON: {data_path}", file=output_stream)
+                print("saving business analysis structured data...", file=output_stream)
+                database_path = parse_business_analysis(stock_code, data_root)
+                print(
+                    f"saved business analysis structured data: {database_path}",
+                    file=output_stream,
+                )
                 return 0
 
             if module == "6":
@@ -977,6 +990,12 @@ def main(
             if args.command == "fetch-jyfx":
                 for data_path in fetch_jyfx(args.stock_code, data_root):
                     print(f"saved jyfx raw JSON: {data_path}", file=output_stream)
+                print("saving business analysis structured data...", file=output_stream)
+                database_path = parse_business_analysis(args.stock_code, data_root)
+                print(
+                    f"saved business analysis structured data: {database_path}",
+                    file=output_stream,
+                )
                 return 0
             if args.command == "fetch-fhrz":
                 for data_path in fetch_fhrz(args.stock_code, data_root):
