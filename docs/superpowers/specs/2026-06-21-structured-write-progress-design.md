@@ -12,9 +12,9 @@ CLI 当前只在结构化解析完成后打印 `saved ... structured data`。当
 
 在以下解析器调用前分别打印提示：
 
-- `parse_company_overview()` 前：`正在保存公司概况结构化数据...`
-- `parse_research_ratings()` 前：`正在保存研报评级结构化数据...`
-- `parse_financial_analysis()` 前：`正在保存财务分析结构化数据...`
+- `parse_company_overview()` 前：`saving company overview structured data...`
+- `parse_research_ratings()` 前：`saving research rating structured data...`
+- `parse_financial_analysis()` 前：`saving financial analysis structured data...`
 
 覆盖参数式命令、`fetch-all` 和交互式菜单中已有的结构化写入路径。提示写入与既有日志相同的 `output_stream`，并且严格位于解析器调用之前；成功后的 `saved ... structured data: <path>` 日志保持不变。
 
