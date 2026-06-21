@@ -849,6 +849,71 @@ class AiContextGenerationTests(unittest.TestCase):
                 business_section,
             )
 
+    def test_renders_available_business_composition_dimension_when_business_dimension_is_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            self.write_business_context_raw(data_root)
+            RawCacheWriter(data_root).write(
+                entry="tdxf10_gg_jyfx",
+                params=["002736", "zygc", "20251231"],
+                stock_code="002736",
+                module="zygc",
+                source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_jyfx",
+                json_data={
+                    "ErrorCode": 0,
+                    "ResultSets": [
+                        {
+                            "ColDes": [
+                                {"Name": name}
+                                for name in (
+                                    "N000",
+                                    "N001",
+                                    "N002",
+                                    "N003",
+                                    "N004",
+                                    "N005",
+                                    "N006",
+                                    "N007",
+                                    "N008",
+                                    "N009",
+                                )
+                            ],
+                            "Content": [
+                                [
+                                    "按产品(项目)",
+                                    "2",
+                                    "电力及热力",
+                                    "220961342675",
+                                    "96.368448",
+                                    "181509430965",
+                                    "97.068688",
+                                    "39451911710",
+                                    "93.272783",
+                                    "17.854667",
+                                ]
+                            ],
+                        },
+                        {
+                            "ColDes": [{"Name": "rq"}],
+                            "Content": [["20251231"]],
+                        },
+                    ],
+                },
+            )
+            parse_business_analysis("002736", data_root)
+
+            text = generate_full_context("002736", data_root).read_text(encoding="utf-8")
+            business_section = text.split("## 4. 经营分析", 1)[1].split(
+                "## 5. 分红融资", 1
+            )[0]
+
+            self.assertIn("### 主营构成（2025 年报，按产品(项目)）", business_section)
+            self.assertIn(
+                "| 电力及热力 | 2209.61 | 96.37 | 1815.09 | 97.07 | "
+                "394.52 | 93.27 | 17.85 |",
+                business_section,
+            )
+
     def test_business_context_degrades_when_database_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             text = generate_full_context("002736", Path(tmp)).read_text(encoding="utf-8")

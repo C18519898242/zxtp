@@ -351,20 +351,38 @@ def render_business_analysis(data_root: Path, stock_code: str) -> str:
             ).fetchall()
             compositions = connection.execute(
                 """
-                SELECT report_date, business_name, revenue_amount, revenue_ratio_pct,
-                       cost_amount, cost_ratio_pct, gross_profit_amount,
-                       gross_profit_ratio_pct, gross_margin_pct
+                WITH latest_period AS (
+                    SELECT max(report_date) AS report_date
+                    FROM business_compositions
+                    WHERE stock_code = ?
+                ), preferred_dimension AS (
+                    SELECT dimension
+                    FROM business_compositions, latest_period
+                    WHERE stock_code = ?
+                      AND business_compositions.report_date = latest_period.report_date
+                    GROUP BY dimension
+                    ORDER BY
+                        CASE dimension
+                            WHEN '按业务' THEN 1
+                            WHEN '按产品(项目)' THEN 2
+                            WHEN '按产品' THEN 3
+                            WHEN '按行业' THEN 4
+                            WHEN '按地区' THEN 5
+                            ELSE 6
+                        END,
+                        dimension
+                    LIMIT 1
+                )
+                SELECT report_date, dimension, business_name, revenue_amount,
+                       revenue_ratio_pct, cost_amount, cost_ratio_pct,
+                       gross_profit_amount, gross_profit_ratio_pct, gross_margin_pct
                 FROM business_compositions
                 WHERE stock_code = ?
-                  AND dimension = '按业务'
-                  AND report_date = (
-                      SELECT max(report_date)
-                      FROM business_compositions
-                      WHERE stock_code = ? AND dimension = '按业务'
-                  )
+                  AND report_date = (SELECT report_date FROM latest_period)
+                  AND dimension = (SELECT dimension FROM preferred_dimension)
                 ORDER BY revenue_amount DESC NULLS LAST, business_name
                 """,
-                [stock_code, stock_code],
+                [stock_code, stock_code, stock_code],
             ).fetchall()
     except duckdb.Error:
         return (
@@ -410,15 +428,16 @@ def render_business_composition_table(rows: list[tuple[Any, ...]]) -> list[str]:
     if not rows:
         return []
     report_date = rows[0][0]
+    dimension = rows[0][1]
     label = f"{report_date[:4]} 年报" if report_date.endswith("-12-31") else report_date
     lines = [
-        f"### 主营构成（{label}，按业务）",
+        f"### 主营构成（{label}，{dimension}）",
         "| 业务 | 营业收入（亿元） | 收入占比（%） | 营业成本（亿元） | "
         "成本占比（%） | 毛利（亿元） | 毛利占比（%） | 毛利率（%） |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for row in rows:
-        _, business_name, revenue, revenue_ratio, cost, cost_ratio, gross_profit, gross_profit_ratio, gross_margin = row
+        _, _, business_name, revenue, revenue_ratio, cost, cost_ratio, gross_profit, gross_profit_ratio, gross_margin = row
         amounts = (revenue, cost, gross_profit)
         formatted_amounts = [
             "—" if value is None else f"{float(value) / 100_000_000:.2f}"
