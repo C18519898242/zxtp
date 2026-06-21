@@ -15,6 +15,14 @@ from zxtp.cli import main
 from zxtp.tqlex import TqlexError, TqlexResponse
 
 
+def assert_output_precedes(
+    test_case: unittest.TestCase, output: str, before: str, after: str
+) -> None:
+    test_case.assertIn(before, output)
+    test_case.assertIn(after, output)
+    test_case.assertLess(output.index(before), output.index(after))
+
+
 class WorkingDirectory:
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -56,6 +64,12 @@ class CliFetchGsgkTests(unittest.TestCase):
             self.assertIn(
                 f"saved company overview structured data: {database_path}",
                 stdout.getvalue(),
+            )
+            assert_output_precedes(
+                self,
+                stdout.getvalue(),
+                "saving company overview structured data...",
+                "saved company overview structured data:",
             )
 
     def test_fetch_gsgk_writes_raw_cache_and_returns_zero(self) -> None:
@@ -205,6 +219,12 @@ class CliFetchYbpjTests(unittest.TestCase):
                 f"saved research rating structured data: {database_path}",
                 stdout.getvalue(),
             )
+            assert_output_precedes(
+                self,
+                stdout.getvalue(),
+                "saving research rating structured data...",
+                "saved research rating structured data:",
+            )
 
     def test_fetch_ybpj_writes_each_raw_cache_and_returns_zero(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -316,6 +336,12 @@ class CliFetchCwfxTests(unittest.TestCase):
             output = stdout.getvalue()
             self.assertIn("saved cwfx raw JSON", output)
             self.assertIn("saved financial analysis structured data:", output)
+            assert_output_precedes(
+                self,
+                output,
+                "saving financial analysis structured data...",
+                "saved financial analysis structured data:",
+            )
             self.assertIn("tdxf10_gg_cwfx_cbdp", output)
 
             expected_paths = [
@@ -852,6 +878,24 @@ class CliFetchAllTests(unittest.TestCase):
             self.assertIn("saved ybpj raw JSON", output)
             self.assertIn("saved cwfx raw JSON", output)
             self.assertIn("saved hyfx raw JSON", output)
+            assert_output_precedes(
+                self,
+                output,
+                "saving company overview structured data...",
+                "saved company overview structured data:",
+            )
+            assert_output_precedes(
+                self,
+                output,
+                "saving research rating structured data...",
+                "saved research rating structured data:",
+            )
+            assert_output_precedes(
+                self,
+                output,
+                "saving financial analysis structured data...",
+                "saved financial analysis structured data:",
+            )
             self.assertIn("开始生成 AI Context", output)
             self.assertIn("saved AI context Markdown", output)
 
@@ -960,6 +1004,12 @@ class CliUiYbpjTests(unittest.TestCase):
             output = stdout.getvalue()
             self.assertIn("ybpj", output)
             self.assertIn("saved ybpj raw JSON", output)
+            assert_output_precedes(
+                self,
+                output,
+                "saving research rating structured data...",
+                "saved research rating structured data:",
+            )
 
 
 class CliUiCwfxTests(unittest.TestCase):
@@ -994,6 +1044,12 @@ class CliUiCwfxTests(unittest.TestCase):
             self.assertIn("cwfx", output)
             self.assertIn("saved cwfx raw JSON", output)
             self.assertIn("saved financial analysis structured data:", output)
+            assert_output_precedes(
+                self,
+                output,
+                "saving financial analysis structured data...",
+                "saved financial analysis structured data:",
+            )
 
 
 class CliUiHyfxTests(unittest.TestCase):
@@ -1300,3 +1356,9 @@ class CliUiTests(unittest.TestCase):
             self.assertIn("下载数据", output)
             self.assertIn("公司概况 gsgk", output)
             self.assertIn("saved gsgk raw JSON", output)
+            assert_output_precedes(
+                self,
+                output,
+                "saving company overview structured data...",
+                "saved company overview structured data:",
+            )

@@ -743,6 +743,7 @@ def run_fetch_all(stock_code: str, data_root: Path, output_stream: TextIO) -> Pa
     print("开始下载公司概况 gsgk...", file=output_stream)
     data_path = fetch_gsgk(valid_stock_code, data_root)
     print(f"saved gsgk raw JSON: {data_path}", file=output_stream)
+    print("saving company overview structured data...", file=output_stream)
     database_path = parse_company_overview(valid_stock_code, data_root)
     print(
         f"saved company overview structured data: {database_path}",
@@ -752,6 +753,7 @@ def run_fetch_all(stock_code: str, data_root: Path, output_stream: TextIO) -> Pa
     print("开始下载研报评级 ybpj...", file=output_stream)
     for data_path in fetch_ybpj(valid_stock_code, data_root):
         print(f"saved ybpj raw JSON: {data_path}", file=output_stream)
+    print("saving research rating structured data...", file=output_stream)
     database_path = parse_research_ratings(valid_stock_code, data_root)
     print(
         f"saved research rating structured data: {database_path}",
@@ -761,6 +763,7 @@ def run_fetch_all(stock_code: str, data_root: Path, output_stream: TextIO) -> Pa
     print("开始下载财务分析 cwfx...", file=output_stream)
     for data_path in fetch_cwfx(valid_stock_code, data_root):
         print(f"saved cwfx raw JSON: {data_path}", file=output_stream)
+    print("saving financial analysis structured data...", file=output_stream)
     database_path = parse_financial_analysis(valid_stock_code, data_root)
     print(
         f"saved financial analysis structured data: {database_path}",
@@ -851,6 +854,7 @@ def run_ui(
                 print("开始下载公司概况 gsgk...", file=output_stream)
                 data_path = fetch_gsgk(stock_code, data_root)
                 print(f"saved gsgk raw JSON: {data_path}", file=output_stream)
+                print("saving company overview structured data...", file=output_stream)
                 database_path = parse_company_overview(stock_code, data_root)
                 print(
                     f"saved company overview structured data: {database_path}",
@@ -863,6 +867,7 @@ def run_ui(
                 print("开始下载研报评级 ybpj...", file=output_stream)
                 for data_path in fetch_ybpj(stock_code, data_root):
                     print(f"saved ybpj raw JSON: {data_path}", file=output_stream)
+                print("saving research rating structured data...", file=output_stream)
                 database_path = parse_research_ratings(stock_code, data_root)
                 print(
                     f"saved research rating structured data: {database_path}",
@@ -875,6 +880,7 @@ def run_ui(
                 print("开始下载财务分析 cwfx...", file=output_stream)
                 for data_path in fetch_cwfx(stock_code, data_root):
                     print(f"saved cwfx raw JSON: {data_path}", file=output_stream)
+                print("saving financial analysis structured data...", file=output_stream)
                 database_path = parse_financial_analysis(stock_code, data_root)
                 print(
                     f"saved financial analysis structured data: {database_path}",
@@ -937,6 +943,7 @@ def main(
             if args.command == "fetch-gsgk":
                 data_path = fetch_gsgk(args.stock_code, data_root)
                 print(f"saved gsgk raw JSON: {data_path}", file=output_stream)
+                print("saving company overview structured data...", file=output_stream)
                 database_path = parse_company_overview(args.stock_code, data_root)
                 print(
                     f"saved company overview structured data: {database_path}",
@@ -946,6 +953,7 @@ def main(
             if args.command == "fetch-ybpj":
                 for data_path in fetch_ybpj(args.stock_code, data_root):
                     print(f"saved ybpj raw JSON: {data_path}", file=output_stream)
+                print("saving research rating structured data...", file=output_stream)
                 database_path = parse_research_ratings(args.stock_code, data_root)
                 print(
                     f"saved research rating structured data: {database_path}",
@@ -955,6 +963,7 @@ def main(
             if args.command == "fetch-cwfx":
                 for data_path in fetch_cwfx(args.stock_code, data_root):
                     print(f"saved cwfx raw JSON: {data_path}", file=output_stream)
+                print("saving financial analysis structured data...", file=output_stream)
                 database_path = parse_financial_analysis(args.stock_code, data_root)
                 print(
                     f"saved financial analysis structured data: {database_path}",
