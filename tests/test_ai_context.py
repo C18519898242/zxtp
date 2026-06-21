@@ -52,7 +52,31 @@ class AiContextGenerationTests(unittest.TestCase):
                 ],
             },
         )
-        for module in ("lyb", "zcfzb", "xjllb"):
+        writer.write(
+            entry="tdxf10_gg_cwfx",
+            params=["002736", "zcfzb", ""],
+            stock_code="002736",
+            module="zcfzb",
+            source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_cwfx",
+            json_data={
+                "ErrorCode": 0,
+                "ResultSets": [
+                    {
+                        "ColDes": [
+                            {"Name": name} for name in ("rq", "T039", "T062", "T071")
+                        ],
+                        "Content": [
+                            ["2022-12-31", "25000000000", "15000000000", "10000000000"],
+                            ["2023-12-31", "30000000000", "18000000000", "12000000000"],
+                            ["2024-12-31", "40000000000", "26000000000", "14000000000"],
+                            ["2025-12-31", "50000000000", "35000000000", "15000000000"],
+                            ["2026-03-31", "55000000000", "36000000000", "19000000000"],
+                        ],
+                    }
+                ],
+            },
+        )
+        for module in ("lyb", "xjllb"):
             writer.write(
                 entry="tdxf10_gg_cwfx",
                 params=["002736", module, ""],
@@ -556,6 +580,68 @@ class AiContextGenerationTests(unittest.TestCase):
             self.assertIn("净资产收益率（%）", financial_section)
             self.assertIn("10.50", financial_section)
             self.assertIn("每股经营现金流（元）", financial_section)
+            self.assertIn("### 资产与负债", financial_section)
+            self.assertIn(
+                "| 资产总计（亿元） | 300.00 | 400.00 | 500.00 | 550.00 |",
+                financial_section,
+            )
+            self.assertIn(
+                "| 负债合计（亿元） | 180.00 | 260.00 | 350.00 | 360.00 |",
+                financial_section,
+            )
+            self.assertIn(
+                "| 所有者权益合计（亿元） | 120.00 | 140.00 | 150.00 | 190.00 |",
+                financial_section,
+            )
+            self.assertIn(
+                "| 资产负债率（%） | 60.00 | 65.00 | 70.00 | 65.45 |",
+                financial_section,
+            )
+            self.assertNotIn("字段业务口径待确认", financial_section)
+
+    def test_balance_sheet_table_uses_dash_for_missing_or_zero_asset_ratio(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            self.write_financial_context_raw(data_root)
+            RawCacheWriter(data_root).write(
+                entry="tdxf10_gg_cwfx",
+                params=["002736", "zcfzb", ""],
+                stock_code="002736",
+                module="zcfzb",
+                source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_cwfx",
+                json_data={
+                    "ErrorCode": 0,
+                    "ResultSets": [
+                        {
+                            "ColDes": [
+                                {"Name": name}
+                                for name in ("rq", "T039", "T062", "T071")
+                            ],
+                            "Content": [
+                                ["2023-12-31", None, "100000000", "50000000"],
+                                ["2024-12-31", "100000000", None, "60000000"],
+                                ["2025-12-31", "0", "100000000", "50000000"],
+                                ["2026-03-31", "200000000", None, "80000000"],
+                            ],
+                        }
+                    ],
+                },
+            )
+            parse_financial_analysis("002736", data_root)
+
+            text = generate_full_context("002736", data_root).read_text(encoding="utf-8")
+            financial_section = text.split("## 3. 财务分析", 1)[1].split(
+                "## 4. 经营分析", 1
+            )[0]
+
+            self.assertIn(
+                "| 资产总计（亿元） | — | 1.00 | 0.00 | 2.00 |",
+                financial_section,
+            )
+            self.assertIn(
+                "| 资产负债率（%） | — | — | — | — |",
+                financial_section,
+            )
 
     def test_financial_context_degrades_when_database_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -81,6 +81,12 @@ FINANCIAL_CONTEXT_METRICS = (
     ("cash_flow_per_share", "每股经营现金流（元）", 3),
 )
 
+BALANCE_SHEET_CONTEXT_METRICS = (
+    ("T039", "资产总计（亿元）"),
+    ("T062", "负债合计（亿元）"),
+    ("T071", "所有者权益合计（亿元）"),
+)
+
 FINANCIAL_ANALYSIS_SOURCES = (
     RawSource("公司类型", "tdxf10_gg_cwfx", "gptype"),
     RawSource("财务诊断", "tdxf10_gg_cwfx", "cwzd"),
@@ -253,6 +259,15 @@ def render_financial_analysis(data_root: Path, stock_code: str) -> str:
                 """,
                 [stock_code],
             ).fetchall()
+            balance_rows = connection.execute(
+                """
+                SELECT report_date, raw_field_name, amount
+                FROM financial_balance_sheets
+                WHERE stock_code = ?
+                  AND raw_field_name IN ('T039', 'T062', 'T071')
+                """,
+                [stock_code],
+            ).fetchall()
     except duckdb.Error:
         return (
             "结构化财务分析暂不可读取；DuckDB 数据库可能正被其他程序占用，"
@@ -275,8 +290,7 @@ def render_financial_analysis(data_root: Path, stock_code: str) -> str:
         "",
         *render_financial_metric_table(rows, periods, labels),
         "",
-        "### 资产与负债",
-        "- 资产负债表明细已结构化为 raw 字段级事实；字段业务口径待确认，暂不展示猜测的金额。",
+        *render_balance_sheet_table(balance_rows, periods, labels),
         "",
         "### 现金流与效率",
         "- 现金流量表明细已结构化为 raw 字段级事实；已确认的每股经营现金流见上表。",
@@ -317,6 +331,46 @@ def render_financial_metric_table(
                 for value in metric_values
             ]
         lines.append("| " + label + " | " + " | ".join(formatted_values) + " |")
+    return lines
+
+
+def render_balance_sheet_table(
+    balance_rows: list[tuple[Any, ...]], periods: list[str], labels: list[str]
+) -> list[str]:
+    values = {(row[0], row[1]): row[2] for row in balance_rows}
+
+    def format_amount(value: float | None) -> str:
+        return "—" if value is None else f"{float(value) / 100_000_000:.2f}"
+
+    def format_debt_ratio(asset: float | None, liability: float | None) -> str:
+        if asset is None or liability is None or float(asset) == 0:
+            return "—"
+        return f"{float(liability) / float(asset) * 100:.2f}"
+
+    lines = [
+        "### 资产与负债",
+        "| 指标 | " + " | ".join(labels) + " |",
+        "| --- | " + " | ".join("---:" for _ in labels) + " |",
+    ]
+    for raw_field_name, label in BALANCE_SHEET_CONTEXT_METRICS:
+        values_for_periods = [
+            values.get((period, raw_field_name)) for period in periods
+        ]
+        lines.append(
+            "| "
+            + label
+            + " | "
+            + " | ".join(format_amount(value) for value in values_for_periods)
+            + " |"
+        )
+
+    debt_ratios = [
+        format_debt_ratio(
+            values.get((period, "T039")), values.get((period, "T062"))
+        )
+        for period in periods
+    ]
+    lines.append("| 资产负债率（%） | " + " | ".join(debt_ratios) + " |")
     return lines
 
 
