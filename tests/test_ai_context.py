@@ -76,7 +76,35 @@ class AiContextGenerationTests(unittest.TestCase):
                 ],
             },
         )
-        for module in ("lyb", "xjllb"):
+        writer.write(
+            entry="tdxf10_gg_cwfx",
+            params=["002736", "xjllb", ""],
+            stock_code="002736",
+            module="xjllb",
+            source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_cwfx",
+            json_data={
+                "ErrorCode": 0,
+                "ResultSets": [
+                    {
+                        "ColDes": [
+                            {"Name": name}
+                            for name in (
+                                "rq", "T017", "T029", "T038", "T039",
+                                "T041", "T042", "T043",
+                            )
+                        ],
+                        "Content": [
+                            ["2022-12-31", "1000000000", "-200000000", "100000000", "0", "900000000", "500000000", "1400000000"],
+                            ["2023-12-31", "1200000000", "-300000000", "200000000", "10000000", "1110000000", "2000000000", "3110000000"],
+                            ["2024-12-31", "1500000000", "-400000000", "-200000000", "20000000", "920000000", "3110000000", "4030000000"],
+                            ["2025-12-31", "-500000000", "-200000000", "300000000", "-10000000", "-410000000", "4030000000", "3620000000"],
+                            ["2026-03-31", "400000000", "-100000000", "-200000000", "5000000", "105000000", "3620000000", "3725000000"],
+                        ],
+                    }
+                ],
+            },
+        )
+        for module in ("lyb",):
             writer.write(
                 entry="tdxf10_gg_cwfx",
                 params=["002736", module, ""],
@@ -598,6 +626,38 @@ class AiContextGenerationTests(unittest.TestCase):
                 financial_section,
             )
             self.assertNotIn("字段业务口径待确认", financial_section)
+            self.assertIn("### 现金流与效率", financial_section)
+            self.assertIn("| 经营活动产生的现金流量净额（亿元） | 12.00 | 15.00 | -5.00 | 4.00 |", financial_section)
+            self.assertIn("| 投资活动产生的现金流量净额（亿元） | -3.00 | -4.00 | -2.00 | -1.00 |", financial_section)
+            self.assertIn("| 筹资活动产生的现金流量净额（亿元） | 2.00 | -2.00 | 3.00 | -2.00 |", financial_section)
+            self.assertIn("| 汇率变动对现金及现金等价物的影响（亿元） | 0.10 | 0.20 | -0.10 | 0.05 |", financial_section)
+            self.assertIn("| 现金及现金等价物净增加额（亿元） | 11.10 | 9.20 | -4.10 | 1.05 |", financial_section)
+            self.assertIn("| 期初现金及现金等价物余额（亿元） | 20.00 | 31.10 | 40.30 | 36.20 |", financial_section)
+            self.assertIn("| 期末现金及现金等价物余额（亿元） | 31.10 | 40.30 | 36.20 | 37.25 |", financial_section)
+            self.assertNotIn("现金流量表明细已结构化", financial_section)
+
+    def test_cash_flow_table_uses_dash_for_missing_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            self.write_financial_context_raw(data_root)
+            RawCacheWriter(data_root).write(
+                entry="tdxf10_gg_cwfx", params=["002736", "xjllb", ""],
+                stock_code="002736", module="xjllb",
+                source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_cwfx",
+                json_data={"ErrorCode": 0, "ResultSets": [{
+                    "ColDes": [{"Name": name} for name in ("rq", "T017", "T029", "T038", "T039", "T041", "T042", "T043")],
+                    "Content": [
+                        ["2023-12-31", "1200000000", "-300000000", "200000000", "10000000", "1110000000", "2000000000", "3110000000"],
+                        ["2024-12-31", "1500000000", "-400000000", "-200000000", "20000000", "920000000", "3110000000", "4030000000"],
+                        ["2025-12-31", "-500000000", "-200000000", "300000000", "-10000000", "-410000000", "4030000000", "3620000000"],
+                        ["2026-03-31", "400000000", None, "-200000000", "5000000", "105000000", "3620000000", "3725000000"],
+                    ],
+                }]},
+            )
+            parse_financial_analysis("002736", data_root)
+            text = generate_full_context("002736", data_root).read_text(encoding="utf-8")
+            financial_section = text.split("## 3. 财务分析", 1)[1].split("## 4. 经营分析", 1)[0]
+            self.assertIn("| 投资活动产生的现金流量净额（亿元） | -3.00 | -4.00 | -2.00 | — |", financial_section)
 
     def test_balance_sheet_table_uses_dash_for_missing_or_zero_asset_ratio(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

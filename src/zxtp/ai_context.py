@@ -87,6 +87,16 @@ BALANCE_SHEET_CONTEXT_METRICS = (
     ("T071", "所有者权益合计（亿元）"),
 )
 
+CASH_FLOW_CONTEXT_METRICS = (
+    ("T017", "经营活动产生的现金流量净额（亿元）"),
+    ("T029", "投资活动产生的现金流量净额（亿元）"),
+    ("T038", "筹资活动产生的现金流量净额（亿元）"),
+    ("T039", "汇率变动对现金及现金等价物的影响（亿元）"),
+    ("T041", "现金及现金等价物净增加额（亿元）"),
+    ("T042", "期初现金及现金等价物余额（亿元）"),
+    ("T043", "期末现金及现金等价物余额（亿元）"),
+)
+
 FINANCIAL_ANALYSIS_SOURCES = (
     RawSource("公司类型", "tdxf10_gg_cwfx", "gptype"),
     RawSource("财务诊断", "tdxf10_gg_cwfx", "cwzd"),
@@ -268,6 +278,17 @@ def render_financial_analysis(data_root: Path, stock_code: str) -> str:
                 """,
                 [stock_code],
             ).fetchall()
+            cash_flow_rows = connection.execute(
+                """
+                SELECT report_date, raw_field_name, amount
+                FROM financial_cash_flows
+                WHERE stock_code = ?
+                  AND raw_field_name IN (
+                      'T017', 'T029', 'T038', 'T039', 'T041', 'T042', 'T043'
+                  )
+                """,
+                [stock_code],
+            ).fetchall()
     except duckdb.Error:
         return (
             "结构化财务分析暂不可读取；DuckDB 数据库可能正被其他程序占用，"
@@ -292,8 +313,7 @@ def render_financial_analysis(data_root: Path, stock_code: str) -> str:
         "",
         *render_balance_sheet_table(balance_rows, periods, labels),
         "",
-        "### 现金流与效率",
-        "- 现金流量表明细已结构化为 raw 字段级事实；已确认的每股经营现金流见上表。",
+        *render_cash_flow_table(cash_flow_rows, periods, labels),
     ]
     return "\n".join(lines)
 
@@ -371,6 +391,26 @@ def render_balance_sheet_table(
         for period in periods
     ]
     lines.append("| 资产负债率（%） | " + " | ".join(debt_ratios) + " |")
+    return lines
+
+
+def render_cash_flow_table(
+    cash_flow_rows: list[tuple[Any, ...]], periods: list[str], labels: list[str]
+) -> list[str]:
+    values = {(row[0], row[1]): row[2] for row in cash_flow_rows}
+    lines = [
+        "### 现金流与效率",
+        "| 指标 | " + " | ".join(labels) + " |",
+        "| --- | " + " | ".join("---:" for _ in labels) + " |",
+    ]
+    for raw_field_name, label in CASH_FLOW_CONTEXT_METRICS:
+        formatted_values = [
+            "—"
+            if (value := values.get((period, raw_field_name))) is None
+            else f"{float(value) / 100_000_000:.2f}"
+            for period in periods
+        ]
+        lines.append("| " + label + " | " + " | ".join(formatted_values) + " |")
     return lines
 
 
