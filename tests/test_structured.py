@@ -138,6 +138,127 @@ class CompanyOverviewStructuredTests(unittest.TestCase):
             )
 
 
+class DividendFinancingStructuredTests(unittest.TestCase):
+    def write_dividend_raw(self, data_root: Path) -> None:
+        writer = RawCacheWriter(data_root)
+        writer.write(
+            entry="tdxf10_gg_fhrz",
+            params=["002736", "pxmz"],
+            stock_code="002736",
+            module="pxmz",
+            source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_fhrz",
+            json_data={
+                "ErrorCode": 0,
+                "ResultSets": [
+                    {"ColDes": [{"Name": "total"}, {"Name": "sum"}], "Content": [["3", "1200000000"]]},
+                    {"ColDes": [{"Name": "total"}, {"Name": "sum"}], "Content": [["1", "100000000"]]},
+                    {"ColDes": [{"Name": "total"}, {"Name": "sum"}, {"Name": "zfcnt"}], "Content": [["2", "500000000", "1"]]},
+                    {"ColDes": [{"Name": "total"}, {"Name": "sum"}, {"Name": "pgcnt"}], "Content": [["0", None, "0"]]},
+                    {"ColDes": [{"Name": "ssy"}], "Content": [["12"]]},
+                    {"ColDes": [{"Name": "total"}, {"Name": "sum"}], "Content": [["0", None]]},
+                    {
+                        "ColDes": [
+                            {"Name": "gxl"}, {"Name": "glzfl"}, {"Name": "ljxjfh"},
+                            {"Name": "njgmjlrfrom"}, {"Name": "xjfhnl"},
+                        ],
+                        "Content": [["5.24", "43.58", "13657341223", "10996869356", "124.19"]],
+                    },
+                ],
+            },
+        )
+        writer.write(
+            entry="tdxf10_gg_fhrz",
+            params=["002736", "fh"],
+            stock_code="002736",
+            module="fh",
+            source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_fhrz",
+            json_data={
+                "ErrorCode": 0,
+                "ResultSets": [{
+                    "ColDes": [
+                        {"Name": name}
+                        for name in ("rq", "T003", "T004", "T006", "T026", "T021", "T023", "T036", "aT036", "glzfl", "jdcode")
+                    ],
+                    "Content": [[
+                        "2025-12-31", "2026-03-25", "每10股派4元(含税)",
+                        "0.740000", "19.0400", "2026-07-09", "2026-07-10",
+                        "实施方案", "036003", "43.58", "全体股东",
+                    ]],
+                }],
+            },
+        )
+        writer.write(
+            entry="tdxf10_gg_fhrz",
+            params=["002736", "fh_zzt"],
+            stock_code="002736",
+            module="fh_zzt",
+            source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_fhrz",
+            json_data={
+                "ErrorCode": 0,
+                "ResultSets": [{
+                    "ColDes": [{"Name": "rq"}, {"Name": "N002"}, {"Name": "N012"}],
+                    "Content": [["2025-12-31", "2025年报", "6279237344"]],
+                }],
+            },
+        )
+        writer.write(
+            entry="tdxf10_gg_fhrz",
+            params=["002736", "fhlszs_glzfl"],
+            stock_code="002736",
+            module="fhlszs_glzfl",
+            source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_fhrz",
+            json_data={
+                "ErrorCode": 0,
+                "ResultSets": [{
+                    "ColDes": [{"Name": "N001"}, {"Name": "N002"}, {"Name": "N003"}, {"Name": "N004"}],
+                    "Content": [["2025年度", "6279237344", "14409553809", "43.58"]],
+                }],
+            },
+        )
+        for module, metric in (
+            ("fhpm_gxl", "5.24"),
+            ("fhpm_glzfl", "43.58"),
+            ("fhpm_pxrzb", "124.19"),
+        ):
+            writer.write(
+                entry="tdxf10_gg_fhrz",
+                params=["002736", module],
+                stock_code="002736",
+                module=module,
+                source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_fhrz",
+                json_data={
+                    "ErrorCode": 0,
+                    "ResultSets": [{
+                        "ColDes": [{"Name": "N001"}, {"Name": "N002"}, {"Name": "dm"}, {"Name": "sc"}, {"Name": "N003"}],
+                        "Content": [["5", "示例股份", "002736", "0", metric]],
+                    }],
+                },
+            )
+
+    def test_parses_dividend_financing_raw_json_into_duckdb(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            self.write_dividend_raw(data_root)
+
+            database_path = structured.parse_dividend_financing("002736", data_root)
+
+            self.assertEqual(database_path, data_root / "warehouse" / "dividend.duckdb")
+            with duckdb.connect(str(database_path), read_only=True) as connection:
+                overview = connection.execute(
+                    "SELECT cash_dividend_count, dividend_yield_pct, payout_ratio_pct FROM dividend_overviews"
+                ).fetchone()
+                plan = connection.execute(
+                    "SELECT plan_description, progress_stage, payout_ratio_pct FROM dividend_plans"
+                ).fetchone()
+                ranking_count = connection.execute(
+                    "SELECT count(*) FROM dividend_rankings WHERE ranked_stock_code = '002736'"
+                ).fetchone()
+
+            self.assertEqual(overview, (3, 5.24, 43.58))
+            self.assertEqual(plan, ("每10股派4元(含税)", "实施方案", 43.58))
+            self.assertEqual(ranking_count, (3,))
+
+
 class ResearchRatingStructuredTests(unittest.TestCase):
     def test_derives_yearly_earnings_forecast_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

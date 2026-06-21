@@ -12,6 +12,7 @@ from zxtp.ai_context import generate_full_context
 from zxtp.structured import (
     parse_business_analysis,
     parse_company_overview,
+    parse_dividend_financing,
     parse_financial_analysis,
     parse_research_ratings,
 )
@@ -824,6 +825,77 @@ class AiContextGenerationTests(unittest.TestCase):
             },
         )
 
+    def write_dividend_context_raw(self, data_root: Path) -> None:
+        writer = RawCacheWriter(data_root)
+        writer.write(
+            entry="tdxf10_gg_fhrz",
+            params=["002736", "pxmz"],
+            stock_code="002736",
+            module="pxmz",
+            source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_fhrz",
+            json_data={
+                "ErrorCode": 0,
+                "ResultSets": [
+                    {"ColDes": [{"Name": "total"}, {"Name": "sum"}], "Content": [["3", "1200000000"]]},
+                    {"ColDes": [{"Name": "total"}, {"Name": "sum"}], "Content": [["1", "100000000"]]},
+                    {"ColDes": [{"Name": "total"}, {"Name": "sum"}, {"Name": "zfcnt"}], "Content": [["2", "500000000", "1"]]},
+                    {"ColDes": [{"Name": "total"}, {"Name": "sum"}, {"Name": "pgcnt"}], "Content": [["0", None, "0"]]},
+                    {"ColDes": [{"Name": "ssy"}], "Content": [["12"]]},
+                    {"ColDes": [{"Name": "total"}, {"Name": "sum"}], "Content": [["0", None]]},
+                    {
+                        "ColDes": [
+                            {"Name": "gxl"}, {"Name": "glzfl"}, {"Name": "ljxjfh"},
+                            {"Name": "njgmjlrfrom"}, {"Name": "xjfhnl"},
+                        ],
+                        "Content": [["5.24", "43.58", "13657341223", "10996869356", "124.19"]],
+                    },
+                ],
+            },
+        )
+        writer.write(
+            entry="tdxf10_gg_fhrz",
+            params=["002736", "fh"],
+            stock_code="002736",
+            module="fh",
+            source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_fhrz",
+            json_data={
+                "ErrorCode": 0,
+                "ResultSets": [{
+                    "ColDes": [{"Name": name} for name in ("rq", "T003", "T004", "T006", "T026", "T021", "T023", "T036", "aT036", "glzfl", "jdcode")],
+                    "Content": [["2025-12-31", "2026-03-25", "每10股派4元(含税)", "0.740000", "19.0400", "2026-07-09", "2026-07-10", "实施方案", "036003", "43.58", "全体股东"]],
+                }],
+            },
+        )
+        writer.write(
+            entry="tdxf10_gg_fhrz",
+            params=["002736", "fh_zzt"],
+            stock_code="002736",
+            module="fh_zzt",
+            source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_fhrz",
+            json_data={"ErrorCode": 0, "ResultSets": [{"ColDes": [{"Name": "rq"}, {"Name": "N002"}, {"Name": "N012"}], "Content": [["2025-12-31", "2025年报", "6279237344"]]}]},
+        )
+        writer.write(
+            entry="tdxf10_gg_fhrz",
+            params=["002736", "fhlszs_glzfl"],
+            stock_code="002736",
+            module="fhlszs_glzfl",
+            source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_fhrz",
+            json_data={"ErrorCode": 0, "ResultSets": [{"ColDes": [{"Name": "N001"}, {"Name": "N002"}, {"Name": "N003"}, {"Name": "N004"}], "Content": [["2025年度", "6279237344", "14409553809", "43.58"]]}]},
+        )
+        for module, metric in (
+            ("fhpm_gxl", "5.24"),
+            ("fhpm_glzfl", "43.58"),
+            ("fhpm_pxrzb", "124.19"),
+        ):
+            writer.write(
+                entry="tdxf10_gg_fhrz",
+                params=["002736", module],
+                stock_code="002736",
+                module=module,
+                source_url="http://example.test/TQLEX?Entry=CWServ.tdxf10_gg_fhrz",
+                json_data={"ErrorCode": 0, "ResultSets": [{"ColDes": [{"Name": "N001"}, {"Name": "N002"}, {"Name": "dm"}, {"Name": "sc"}, {"Name": "N003"}], "Content": [["5", "示例股份", "002736", "0", metric]]}]},
+            )
+
     def test_renders_structured_business_analysis(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             data_root = Path(tmp)
@@ -913,6 +985,28 @@ class AiContextGenerationTests(unittest.TestCase):
                 "394.52 | 93.27 | 17.85 |",
                 business_section,
             )
+
+    def test_renders_structured_dividend_financing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            self.write_dividend_context_raw(data_root)
+            parse_dividend_financing("002736", data_root)
+
+            text = generate_full_context("002736", data_root).read_text(encoding="utf-8")
+            dividend_section = text.split("## 5. 分红融资", 1)[1].split(
+                "## 6. 研报评级", 1
+            )[0]
+
+            self.assertIn("### 分红募资概览", dividend_section)
+            self.assertIn("累计现金分红金额：12.00 亿元", dividend_section)
+            self.assertIn("当前股息率：5.24%", dividend_section)
+            self.assertIn("### 分红转增方案", dividend_section)
+            self.assertIn("每10股派4元(含税)", dividend_section)
+            self.assertIn("### 股利支付率历史", dividend_section)
+            self.assertIn("| 2025年度 | 62.79 | 144.10 | 43.58 |", dividend_section)
+            self.assertIn("### 分红排名（当前股票）", dividend_section)
+            self.assertIn("股息率排名", dividend_section)
+            self.assertNotIn("暂无结构化摘要", dividend_section)
 
     def test_business_context_degrades_when_database_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

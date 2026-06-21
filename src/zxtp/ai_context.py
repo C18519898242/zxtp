@@ -206,6 +206,7 @@ def generate_full_context(stock_code: str, data_root: Path) -> Path:
     dividend_statuses = source_statuses(
         data_root, valid_stock_code, DIVIDEND_FINANCING_SOURCES
     )
+    dividend_financing = render_dividend_financing(data_root, valid_stock_code)
     research_statuses = source_statuses(
         data_root, valid_stock_code, RESEARCH_RATING_SOURCES
     )
@@ -239,6 +240,7 @@ def generate_full_context(stock_code: str, data_root: Path) -> Path:
             "financial_analysis_sources": render_sources(financial_statuses),
             "business_analysis": business_analysis,
             "business_analysis_sources": render_sources(business_statuses),
+            "dividend_financing": dividend_financing,
             "dividend_financing_sources": render_sources(dividend_statuses),
             "research_ratings": research_ratings,
             "research_rating_sources": render_sources(research_statuses),
@@ -463,6 +465,203 @@ def render_business_composition_table(rows: list[tuple[Any, ...]]) -> list[str]:
                 ]
             )
             + " |"
+        )
+    return [*lines, ""]
+
+
+def render_dividend_financing(data_root: Path, stock_code: str) -> str:
+    database_path = data_root / "warehouse" / "dividend.duckdb"
+    if not database_path.exists():
+        return "暂无结构化分红融资。请先下载分红融资数据。"
+
+    try:
+        with duckdb.connect(str(database_path), read_only=True) as connection:
+            overview = connection.execute(
+                """
+                SELECT cash_dividend_count, cash_dividend_amount,
+                       bonus_issue_count, bonus_issue_amount,
+                       private_placement_count, private_placement_amount,
+                       right_issue_count, right_issue_amount, listed_years,
+                       dividend_yield_pct, payout_ratio_pct,
+                       cumulative_cash_dividend, net_profit_parent,
+                       cash_dividend_to_profit_pct
+                FROM dividend_overviews
+                WHERE stock_code = ?
+                ORDER BY structured_at DESC
+                LIMIT 1
+                """,
+                [stock_code],
+            ).fetchone()
+            plans = connection.execute(
+                """
+                SELECT report_date, announcement_date, plan_description,
+                       earnings_per_share, net_asset_per_share,
+                       registration_date, ex_dividend_date, progress_stage,
+                       payout_ratio_pct
+                FROM dividend_plans
+                WHERE stock_code = ?
+                ORDER BY report_date DESC NULLS LAST, announcement_date DESC NULLS LAST
+                LIMIT 6
+                """,
+                [stock_code],
+            ).fetchall()
+            payout_history = connection.execute(
+                """
+                SELECT period_label, cash_dividend_amount, net_profit_parent,
+                       payout_ratio_pct
+                FROM dividend_payout_history
+                WHERE stock_code = ?
+                ORDER BY period_label DESC NULLS LAST
+                LIMIT 5
+                """,
+                [stock_code],
+            ).fetchall()
+            ranking_rows = connection.execute(
+                """
+                SELECT ranking_type, scope_index, rank, ranked_stock_name,
+                       ranked_stock_code, metric_value
+                FROM dividend_rankings
+                WHERE stock_code = ? AND ranked_stock_code = ?
+                ORDER BY ranking_type, scope_index
+                """,
+                [stock_code, stock_code],
+            ).fetchall()
+    except duckdb.Error:
+        return (
+            "结构化分红融资暂不可读取；DuckDB 数据库可能正被其他程序占用，"
+            "或尚未生成相关数据表。请断开 DBeaver 连接后重新生成 AI Context。"
+        )
+
+    sections = [
+        *render_dividend_overview(overview),
+        *render_dividend_plan_table(plans),
+        *render_dividend_payout_history_table(payout_history),
+        *render_dividend_rankings(ranking_rows),
+    ]
+    return "\n".join(sections) if sections else "暂无结构化分红融资。请先下载分红融资数据。"
+
+
+def render_dividend_overview(row: tuple[Any, ...] | None) -> list[str]:
+    if row is None:
+        return []
+    (
+        cash_count,
+        cash_amount,
+        bonus_count,
+        bonus_amount,
+        placement_count,
+        placement_amount,
+        rights_count,
+        rights_amount,
+        listed_years,
+        dividend_yield,
+        payout_ratio,
+        cumulative_cash,
+        net_profit_parent,
+        cash_to_profit,
+    ) = row
+    lines = ["### 分红募资概览"]
+    details = (
+        ("上市年限", listed_years, lambda value: f"{int(value)} 年"),
+        ("累计现金分红次数", cash_count, lambda value: f"{int(value)} 次"),
+        ("累计现金分红金额", cash_amount, format_yuan_as_yi_with_unit),
+        ("送转次数", bonus_count, lambda value: f"{int(value)} 次"),
+        ("送转规模", bonus_amount, format_yuan_as_yi_with_unit),
+        ("增发次数", placement_count, lambda value: f"{int(value)} 次"),
+        ("增发募资", placement_amount, format_yuan_as_yi_with_unit),
+        ("配股次数", rights_count, lambda value: f"{int(value)} 次"),
+        ("配股募资", rights_amount, format_yuan_as_yi_with_unit),
+        ("当前股息率", dividend_yield, format_pct_with_unit),
+        ("股利支付率", payout_ratio, format_pct_with_unit),
+        ("近年累计现金分红", cumulative_cash, format_yuan_as_yi_with_unit),
+        ("近年归母净利润", net_profit_parent, format_yuan_as_yi_with_unit),
+        ("现金分红/净利润", cash_to_profit, format_pct_with_unit),
+    )
+    for label, value, formatter in details:
+        if value is not None:
+            lines.append(f"- {label}：{formatter(value)}")
+    return [*lines, ""] if len(lines) > 1 else []
+
+
+def render_dividend_plan_table(rows: list[tuple[Any, ...]]) -> list[str]:
+    if not rows:
+        return []
+    lines = [
+        "### 分红转增方案",
+        "| 报告期 | 公告日 | 方案 | 每股收益 | 每股净资产 | 股权登记日 | 除权除息日 | 进度 | 股利支付率（%） |",
+        "| --- | --- | --- | ---: | ---: | --- | --- | --- | ---: |",
+    ]
+    for row in rows:
+        (
+            report_date,
+            announcement_date,
+            description,
+            eps,
+            nav_per_share,
+            registration_date,
+            ex_dividend_date,
+            progress_stage,
+            payout_ratio,
+        ) = row
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    format_context_value(report_date) or "—",
+                    format_context_value(announcement_date) or "—",
+                    format_context_value(description) or "—",
+                    format_metric_or_dash(eps, 3),
+                    format_metric_or_dash(nav_per_share, 2),
+                    format_context_value(registration_date) or "—",
+                    format_context_value(ex_dividend_date) or "—",
+                    format_context_value(progress_stage) or "—",
+                    format_metric_or_dash(payout_ratio, 2),
+                ]
+            )
+            + " |"
+        )
+    return [*lines, ""]
+
+
+def render_dividend_payout_history_table(rows: list[tuple[Any, ...]]) -> list[str]:
+    if not rows:
+        return []
+    lines = [
+        "### 股利支付率历史",
+        "| 期间 | 现金分红（亿元） | 归母净利润（亿元） | 股利支付率（%） |",
+        "| --- | ---: | ---: | ---: |",
+    ]
+    for period_label, cash_amount, net_profit_parent, payout_ratio in rows:
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    format_context_value(period_label) or "—",
+                    format_yuan_as_yi(cash_amount),
+                    format_yuan_as_yi(net_profit_parent),
+                    format_metric_or_dash(payout_ratio, 2),
+                ]
+            )
+            + " |"
+        )
+    return [*lines, ""]
+
+
+def render_dividend_rankings(rows: list[tuple[Any, ...]]) -> list[str]:
+    if not rows:
+        return []
+    labels = {
+        "fhpm_gxl": "股息率排名",
+        "fhpm_glzfl": "股利支付率排名",
+        "fhpm_pxrzb": "派现融资比排名",
+    }
+    lines = ["### 分红排名（当前股票）"]
+    for ranking_type, scope_index, rank, stock_name, ranked_code, metric_value in rows:
+        scope = "行业前十" if int(scope_index) == 0 else "全市场/扩展样本"
+        label = labels.get(str(ranking_type), str(ranking_type))
+        name = format_context_value(stock_name) or ranked_code
+        lines.append(
+            f"- {label}（{scope}）：{name} {ranked_code}，排名 {rank}，指标 {format_metric_or_dash(metric_value, 2)}"
         )
     return [*lines, ""]
 
@@ -863,6 +1062,28 @@ def format_wan_as_yi(value: Any) -> str:
     if value is None:
         return "-"
     return f"{float(value) / 10000:.2f}"
+
+
+def format_metric_or_dash(value: Any, decimal_places: int) -> str:
+    if value is None:
+        return "—"
+    return f"{float(value):.{decimal_places}f}"
+
+
+def format_yuan_as_yi(value: Any) -> str:
+    if value is None:
+        return "—"
+    return f"{float(value) / 100_000_000:.2f}"
+
+
+def format_yuan_as_yi_with_unit(value: Any) -> str:
+    return f"{format_yuan_as_yi(value)} 亿元"
+
+
+def format_pct_with_unit(value: Any) -> str:
+    if value is None:
+        return "—"
+    return f"{float(value):.2f}%"
 
 
 def source_statuses(

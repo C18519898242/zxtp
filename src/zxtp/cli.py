@@ -12,6 +12,7 @@ from .config import resolve_data_root
 from .structured import (
     parse_business_analysis,
     parse_company_overview,
+    parse_dividend_financing,
     parse_financial_analysis,
     parse_research_ratings,
 )
@@ -784,6 +785,12 @@ def run_fetch_all(stock_code: str, data_root: Path, output_stream: TextIO) -> Pa
     print("开始下载分红融资 fhrz...", file=output_stream)
     for data_path in fetch_fhrz(valid_stock_code, data_root):
         print(f"saved fhrz raw JSON: {data_path}", file=output_stream)
+    print("saving dividend financing structured data...", file=output_stream)
+    database_path = parse_dividend_financing(valid_stock_code, data_root)
+    print(
+        f"saved dividend financing structured data: {database_path}",
+        file=output_stream,
+    )
 
     print("开始下载行业分析 hyfx...", file=output_stream)
     for data_path in fetch_hyfx(valid_stock_code, data_root):
@@ -920,6 +927,12 @@ def run_ui(
                 print("开始下载分红融资 fhrz...", file=output_stream)
                 for data_path in fetch_fhrz(stock_code, data_root):
                     print(f"saved fhrz raw JSON: {data_path}", file=output_stream)
+                print("saving dividend financing structured data...", file=output_stream)
+                database_path = parse_dividend_financing(stock_code, data_root)
+                print(
+                    f"saved dividend financing structured data: {database_path}",
+                    file=output_stream,
+                )
                 return 0
 
             if module == "7":
@@ -1000,6 +1013,12 @@ def main(
             if args.command == "fetch-fhrz":
                 for data_path in fetch_fhrz(args.stock_code, data_root):
                     print(f"saved fhrz raw JSON: {data_path}", file=output_stream)
+                print("saving dividend financing structured data...", file=output_stream)
+                database_path = parse_dividend_financing(args.stock_code, data_root)
+                print(
+                    f"saved dividend financing structured data: {database_path}",
+                    file=output_stream,
+                )
                 return 0
             if args.command == "fetch-gdyj":
                 for data_path in fetch_gdyj(args.stock_code, data_root):

@@ -26,6 +26,19 @@ BUSINESS_OPERATING_DATA_ENTRY = "tdxf10_gg_jyfx_jysj"
 BUSINESS_PROFILE_MODULE = "zyyw"
 BUSINESS_OPERATING_METRICS_MODULE = "jysj"
 BUSINESS_COMPOSITION_MODULE = "zygc"
+DIVIDEND_FINANCING_ENTRY = "tdxf10_gg_fhrz"
+DIVIDEND_OVERVIEW_MODULE = "pxmz"
+DIVIDEND_PLAN_MODULE = "fh"
+DIVIDEND_CASH_HISTORY_MODULE = "fh_zzt"
+DIVIDEND_PAYOUT_HISTORY_MODULE = "fhlszs_glzfl"
+DIVIDEND_YIELD_RANKING_MODULE = "fhpm_gxl"
+DIVIDEND_PAYOUT_RANKING_MODULE = "fhpm_glzfl"
+DIVIDEND_CASH_FINANCING_RANKING_MODULE = "fhpm_pxrzb"
+DIVIDEND_RANKING_MODULES = (
+    DIVIDEND_YIELD_RANKING_MODULE,
+    DIVIDEND_PAYOUT_RANKING_MODULE,
+    DIVIDEND_CASH_FINANCING_RANKING_MODULE,
+)
 
 FINANCIAL_KEY_METRIC_FIELDS = {
     "basic_earnings_per_share": ("mgsy", "yuan"),
@@ -483,6 +496,310 @@ def parse_business_analysis(stock_code: str, data_root: Path) -> Path:
         connection.execute("COMMIT")
 
     return database_path
+
+
+def parse_dividend_financing(stock_code: str, data_root: Path) -> Path:
+    valid_stock_code = validate_stock_code(stock_code)
+    data_root = Path(data_root)
+    writer = RawCacheWriter(data_root)
+    database_path = data_root / "warehouse" / "dividend.duckdb"
+    database_path.parent.mkdir(parents=True, exist_ok=True)
+    structured_at = now_shanghai_iso()
+
+    overview_paths = writer.paths(
+        entry=DIVIDEND_FINANCING_ENTRY,
+        stock_code=valid_stock_code,
+        module=DIVIDEND_OVERVIEW_MODULE,
+    )
+    plan_paths = writer.paths(
+        entry=DIVIDEND_FINANCING_ENTRY,
+        stock_code=valid_stock_code,
+        module=DIVIDEND_PLAN_MODULE,
+    )
+    cash_history_paths = writer.paths(
+        entry=DIVIDEND_FINANCING_ENTRY,
+        stock_code=valid_stock_code,
+        module=DIVIDEND_CASH_HISTORY_MODULE,
+    )
+    payout_history_paths = writer.paths(
+        entry=DIVIDEND_FINANCING_ENTRY,
+        stock_code=valid_stock_code,
+        module=DIVIDEND_PAYOUT_HISTORY_MODULE,
+    )
+
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute(DIVIDEND_OVERVIEWS_SCHEMA)
+        connection.execute(DIVIDEND_PLANS_SCHEMA)
+        connection.execute(DIVIDEND_CASH_HISTORY_SCHEMA)
+        connection.execute(DIVIDEND_PAYOUT_HISTORY_SCHEMA)
+        connection.execute(DIVIDEND_RANKINGS_SCHEMA)
+        connection.execute("BEGIN")
+        try:
+            replace_dividend_overview(
+                connection,
+                stock_code=valid_stock_code,
+                rows_by_result_set=read_optional_all_result_set_rows(overview_paths),
+                paths=overview_paths,
+                metadata=read_optional_json_object(overview_paths.meta_path),
+                structured_at=structured_at,
+            )
+            replace_dividend_plans(
+                connection,
+                stock_code=valid_stock_code,
+                rows=read_optional_result_set_rows(plan_paths),
+                paths=plan_paths,
+                metadata=read_optional_json_object(plan_paths.meta_path),
+                structured_at=structured_at,
+            )
+            replace_dividend_cash_history(
+                connection,
+                stock_code=valid_stock_code,
+                rows=read_optional_result_set_rows(cash_history_paths),
+                paths=cash_history_paths,
+                metadata=read_optional_json_object(cash_history_paths.meta_path),
+                structured_at=structured_at,
+            )
+            replace_dividend_payout_history(
+                connection,
+                stock_code=valid_stock_code,
+                rows=read_optional_result_set_rows(payout_history_paths),
+                paths=payout_history_paths,
+                metadata=read_optional_json_object(payout_history_paths.meta_path),
+                structured_at=structured_at,
+            )
+            for module in DIVIDEND_RANKING_MODULES:
+                paths = writer.paths(
+                    entry=DIVIDEND_FINANCING_ENTRY,
+                    stock_code=valid_stock_code,
+                    module=module,
+                )
+                replace_dividend_rankings(
+                    connection,
+                    stock_code=valid_stock_code,
+                    ranking_type=module,
+                    rows_by_result_set=read_optional_all_result_set_rows(paths),
+                    paths=paths,
+                    metadata=read_optional_json_object(paths.meta_path),
+                    structured_at=structured_at,
+                )
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
+        connection.execute("COMMIT")
+
+    return database_path
+
+
+def replace_dividend_overview(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    stock_code: str,
+    rows_by_result_set: list[list[dict[str, Any]]],
+    paths: Any,
+    metadata: dict[str, Any],
+    structured_at: str,
+) -> None:
+    connection.execute("DELETE FROM dividend_overviews WHERE stock_code = ?", [stock_code])
+    if not rows_by_result_set:
+        return
+
+    def row_at(index: int) -> dict[str, Any]:
+        rows = result_set_at(rows_by_result_set, index)
+        return rows[0] if rows else {}
+
+    cash = row_at(0)
+    bonus_issue = row_at(1)
+    private_placement = row_at(2)
+    right_issue = row_at(3)
+    listed_years = row_at(4)
+    refinance_other = row_at(5)
+    metrics = row_at(6)
+    values = [
+        stock_code,
+        parse_integer(normalize_text(cash.get("total"))),
+        parse_float(normalize_text(cash.get("sum"))),
+        parse_integer(normalize_text(bonus_issue.get("total"))),
+        parse_float(normalize_text(bonus_issue.get("sum"))),
+        parse_integer(normalize_text(private_placement.get("total"))),
+        parse_float(normalize_text(private_placement.get("sum"))),
+        parse_integer(normalize_text(private_placement.get("zfcnt"))),
+        parse_integer(normalize_text(right_issue.get("total"))),
+        parse_float(normalize_text(right_issue.get("sum"))),
+        parse_integer(normalize_text(right_issue.get("pgcnt"))),
+        parse_integer(normalize_text(listed_years.get("ssy"))),
+        parse_integer(normalize_text(refinance_other.get("total"))),
+        parse_float(normalize_text(refinance_other.get("sum"))),
+        parse_float(normalize_text(metrics.get("gxl"))),
+        parse_float(normalize_text(metrics.get("glzfl"))),
+        parse_float(normalize_text(metrics.get("ljxjfh"))),
+        parse_float(normalize_text(metrics.get("njgmjlrfrom"))),
+        parse_float(normalize_text(metrics.get("xjfhnl"))),
+        paths.data_path.as_posix(),
+        DIVIDEND_FINANCING_ENTRY,
+        DIVIDEND_OVERVIEW_MODULE,
+        metadata.get("fetched_at"),
+        metadata.get("response_hash"),
+        structured_at,
+    ]
+    if not any(value is not None for value in values[1:19]):
+        return
+    connection.execute(DIVIDEND_OVERVIEWS_INSERT, values)
+
+
+def replace_dividend_plans(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    stock_code: str,
+    rows: list[dict[str, Any]],
+    paths: Any,
+    metadata: dict[str, Any],
+    structured_at: str,
+) -> None:
+    connection.execute("DELETE FROM dividend_plans WHERE stock_code = ?", [stock_code])
+    values = []
+    for row in rows:
+        report_date = normalize_report_date(normalize_text(row.get("rq")))
+        plan_description = normalize_text(row.get("T004"))
+        if report_date is None and plan_description is None:
+            continue
+        values.append(
+            [
+                stock_code,
+                report_date,
+                normalize_report_date(normalize_text(row.get("T003"))),
+                plan_description,
+                parse_float(normalize_text(row.get("T006"))),
+                parse_float(normalize_text(row.get("T026"))),
+                normalize_report_date(normalize_text(row.get("T021"))),
+                normalize_report_date(normalize_text(row.get("T023"))),
+                normalize_text(row.get("T036")),
+                normalize_text(row.get("aT036")),
+                parse_float(normalize_text(row.get("glzfl"))),
+                normalize_text(row.get("jdcode")),
+                paths.data_path.as_posix(),
+                DIVIDEND_FINANCING_ENTRY,
+                DIVIDEND_PLAN_MODULE,
+                metadata.get("fetched_at"),
+                metadata.get("response_hash"),
+                structured_at,
+            ]
+        )
+    if values:
+        connection.executemany(DIVIDEND_PLANS_INSERT, values)
+
+
+def replace_dividend_cash_history(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    stock_code: str,
+    rows: list[dict[str, Any]],
+    paths: Any,
+    metadata: dict[str, Any],
+    structured_at: str,
+) -> None:
+    connection.execute(
+        "DELETE FROM dividend_cash_history WHERE stock_code = ?", [stock_code]
+    )
+    values = []
+    for row in rows:
+        report_date = normalize_report_date(normalize_text(row.get("rq")))
+        if report_date is None:
+            continue
+        values.append(
+            [
+                stock_code,
+                report_date,
+                normalize_text(row.get("N002")),
+                parse_float(normalize_text(row.get("N012"))),
+                paths.data_path.as_posix(),
+                DIVIDEND_FINANCING_ENTRY,
+                DIVIDEND_CASH_HISTORY_MODULE,
+                metadata.get("fetched_at"),
+                metadata.get("response_hash"),
+                structured_at,
+            ]
+        )
+    if values:
+        connection.executemany(DIVIDEND_CASH_HISTORY_INSERT, values)
+
+
+def replace_dividend_payout_history(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    stock_code: str,
+    rows: list[dict[str, Any]],
+    paths: Any,
+    metadata: dict[str, Any],
+    structured_at: str,
+) -> None:
+    connection.execute(
+        "DELETE FROM dividend_payout_history WHERE stock_code = ?", [stock_code]
+    )
+    values = []
+    for row in rows:
+        period_label = normalize_text(row.get("N001"))
+        if period_label is None:
+            continue
+        values.append(
+            [
+                stock_code,
+                period_label,
+                parse_float(normalize_text(row.get("N002"))),
+                parse_float(normalize_text(row.get("N003"))),
+                parse_float(normalize_text(row.get("N004"))),
+                paths.data_path.as_posix(),
+                DIVIDEND_FINANCING_ENTRY,
+                DIVIDEND_PAYOUT_HISTORY_MODULE,
+                metadata.get("fetched_at"),
+                metadata.get("response_hash"),
+                structured_at,
+            ]
+        )
+    if values:
+        connection.executemany(DIVIDEND_PAYOUT_HISTORY_INSERT, values)
+
+
+def replace_dividend_rankings(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    stock_code: str,
+    ranking_type: str,
+    rows_by_result_set: list[list[dict[str, Any]]],
+    paths: Any,
+    metadata: dict[str, Any],
+    structured_at: str,
+) -> None:
+    connection.execute(
+        "DELETE FROM dividend_rankings WHERE stock_code = ? AND ranking_type = ?",
+        [stock_code, ranking_type],
+    )
+    values = []
+    for scope_index, rows in enumerate(rows_by_result_set):
+        for row in rows:
+            ranked_stock_code = normalize_text(row.get("dm"))
+            rank = parse_integer(normalize_text(row.get("N001")))
+            if ranked_stock_code is None or rank is None:
+                continue
+            values.append(
+                [
+                    stock_code,
+                    ranking_type,
+                    scope_index,
+                    rank,
+                    normalize_text(row.get("N002")),
+                    ranked_stock_code,
+                    normalize_text(row.get("sc")),
+                    parse_float(normalize_text(row.get("N003"))),
+                    paths.data_path.as_posix(),
+                    DIVIDEND_FINANCING_ENTRY,
+                    ranking_type,
+                    metadata.get("fetched_at"),
+                    metadata.get("response_hash"),
+                    structured_at,
+                ]
+            )
+    if values:
+        connection.executemany(DIVIDEND_RANKINGS_INSERT, values)
 
 
 def read_optional_json_object(path: Path) -> dict[str, Any]:
@@ -1705,4 +2022,159 @@ CREATE TABLE IF NOT EXISTS business_compositions (
     source_response_hash VARCHAR,
     structured_at VARCHAR NOT NULL
 )
+"""
+
+DIVIDEND_OVERVIEWS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS dividend_overviews (
+    stock_code VARCHAR NOT NULL,
+    cash_dividend_count BIGINT,
+    cash_dividend_amount DOUBLE,
+    bonus_issue_count BIGINT,
+    bonus_issue_amount DOUBLE,
+    private_placement_count BIGINT,
+    private_placement_amount DOUBLE,
+    private_placement_success_count BIGINT,
+    right_issue_count BIGINT,
+    right_issue_amount DOUBLE,
+    right_issue_success_count BIGINT,
+    listed_years BIGINT,
+    refinance_other_count BIGINT,
+    refinance_other_amount DOUBLE,
+    dividend_yield_pct DOUBLE,
+    payout_ratio_pct DOUBLE,
+    cumulative_cash_dividend DOUBLE,
+    net_profit_parent DOUBLE,
+    cash_dividend_to_profit_pct DOUBLE,
+    source_path VARCHAR NOT NULL,
+    source_entry VARCHAR NOT NULL,
+    source_module VARCHAR NOT NULL,
+    source_fetched_at VARCHAR,
+    source_response_hash VARCHAR,
+    structured_at VARCHAR NOT NULL
+)
+"""
+
+DIVIDEND_OVERVIEWS_INSERT = """
+INSERT INTO dividend_overviews (
+    stock_code, cash_dividend_count, cash_dividend_amount, bonus_issue_count,
+    bonus_issue_amount, private_placement_count, private_placement_amount,
+    private_placement_success_count, right_issue_count, right_issue_amount,
+    right_issue_success_count, listed_years, refinance_other_count,
+    refinance_other_amount, dividend_yield_pct, payout_ratio_pct,
+    cumulative_cash_dividend, net_profit_parent, cash_dividend_to_profit_pct,
+    source_path, source_entry, source_module, source_fetched_at,
+    source_response_hash, structured_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"""
+
+DIVIDEND_PLANS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS dividend_plans (
+    stock_code VARCHAR NOT NULL,
+    report_date VARCHAR,
+    announcement_date VARCHAR,
+    plan_description VARCHAR,
+    earnings_per_share DOUBLE,
+    net_asset_per_share DOUBLE,
+    registration_date VARCHAR,
+    ex_dividend_date VARCHAR,
+    progress_stage VARCHAR,
+    progress_code VARCHAR,
+    payout_ratio_pct DOUBLE,
+    shareholder_scope VARCHAR,
+    source_path VARCHAR NOT NULL,
+    source_entry VARCHAR NOT NULL,
+    source_module VARCHAR NOT NULL,
+    source_fetched_at VARCHAR,
+    source_response_hash VARCHAR,
+    structured_at VARCHAR NOT NULL
+)
+"""
+
+DIVIDEND_PLANS_INSERT = """
+INSERT INTO dividend_plans (
+    stock_code, report_date, announcement_date, plan_description,
+    earnings_per_share, net_asset_per_share, registration_date,
+    ex_dividend_date, progress_stage, progress_code, payout_ratio_pct,
+    shareholder_scope, source_path, source_entry, source_module,
+    source_fetched_at, source_response_hash, structured_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"""
+
+DIVIDEND_CASH_HISTORY_SCHEMA = """
+CREATE TABLE IF NOT EXISTS dividend_cash_history (
+    stock_code VARCHAR NOT NULL,
+    report_date VARCHAR NOT NULL,
+    period_label VARCHAR,
+    cash_dividend_amount DOUBLE,
+    source_path VARCHAR NOT NULL,
+    source_entry VARCHAR NOT NULL,
+    source_module VARCHAR NOT NULL,
+    source_fetched_at VARCHAR,
+    source_response_hash VARCHAR,
+    structured_at VARCHAR NOT NULL
+)
+"""
+
+DIVIDEND_CASH_HISTORY_INSERT = """
+INSERT INTO dividend_cash_history (
+    stock_code, report_date, period_label, cash_dividend_amount, source_path,
+    source_entry, source_module, source_fetched_at, source_response_hash,
+    structured_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"""
+
+DIVIDEND_PAYOUT_HISTORY_SCHEMA = """
+CREATE TABLE IF NOT EXISTS dividend_payout_history (
+    stock_code VARCHAR NOT NULL,
+    period_label VARCHAR NOT NULL,
+    cash_dividend_amount DOUBLE,
+    net_profit_parent DOUBLE,
+    payout_ratio_pct DOUBLE,
+    source_path VARCHAR NOT NULL,
+    source_entry VARCHAR NOT NULL,
+    source_module VARCHAR NOT NULL,
+    source_fetched_at VARCHAR,
+    source_response_hash VARCHAR,
+    structured_at VARCHAR NOT NULL
+)
+"""
+
+DIVIDEND_PAYOUT_HISTORY_INSERT = """
+INSERT INTO dividend_payout_history (
+    stock_code, period_label, cash_dividend_amount, net_profit_parent,
+    payout_ratio_pct, source_path, source_entry, source_module,
+    source_fetched_at, source_response_hash, structured_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"""
+
+DIVIDEND_RANKINGS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS dividend_rankings (
+    stock_code VARCHAR NOT NULL,
+    ranking_type VARCHAR NOT NULL,
+    scope_index INTEGER NOT NULL,
+    rank BIGINT NOT NULL,
+    ranked_stock_name VARCHAR,
+    ranked_stock_code VARCHAR NOT NULL,
+    market_code VARCHAR,
+    metric_value DOUBLE,
+    source_path VARCHAR NOT NULL,
+    source_entry VARCHAR NOT NULL,
+    source_module VARCHAR NOT NULL,
+    source_fetched_at VARCHAR,
+    source_response_hash VARCHAR,
+    structured_at VARCHAR NOT NULL
+)
+"""
+
+DIVIDEND_RANKINGS_INSERT = """
+INSERT INTO dividend_rankings (
+    stock_code, ranking_type, scope_index, rank, ranked_stock_name,
+    ranked_stock_code, market_code, metric_value, source_path, source_entry,
+    source_module, source_fetched_at, source_response_hash, structured_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
